@@ -1,0 +1,8 @@
+# VedaPavitra Devotional Commerce Robots Configuration
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /api/
+Disallow: /checkout/
+
+Sitemap: https://vedapavitra.com/sitemap.xml
