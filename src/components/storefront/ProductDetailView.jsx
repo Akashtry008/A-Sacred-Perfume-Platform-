@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   MapPin,
   Share2,
+  Play,
 } from 'lucide-react';
 import { useCart } from '@/context/CartContext';
 import { useWishlist } from '@/context/WishlistContext';
@@ -31,9 +32,10 @@ export default function ProductDetailView({ product, relatedProducts, reviews: i
   const [selectedVariant, setSelectedVariant] = useState(defaultVariant);
   const [quantity, setQuantity] = useState(1);
 
-  // Active Gallery Image
+  // Active Gallery Image & Video state
   const images = product.images || [];
   const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [isVideoActive, setIsVideoActive] = useState(false);
 
   // PIN code checker state
   const [pinCode, setPinCode] = useState('');
@@ -158,7 +160,7 @@ export default function ProductDetailView({ product, relatedProducts, reviews: i
         >
           {/* Gallery Side */}
           <div>
-            {/* Main Stage Image */}
+            {/* Main Stage Image / Video */}
             <div
               style={{
                 position: 'relative',
@@ -170,14 +172,56 @@ export default function ProductDetailView({ product, relatedProducts, reviews: i
                 marginBottom: '16px',
               }}
             >
-              <img
-                src={images[activeImageIndex]?.url || 'https://images.unsplash.com/photo-1608571423902-eed4a5ad8108?auto=format&fit=crop&w=1000&q=80'}
-                alt={product.title}
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              />
+              {product.videoUrl && isVideoActive ? (
+                <video
+                  src={product.videoUrl}
+                  controls
+                  autoPlay
+                  loop
+                  playsInline
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              ) : (
+                <img
+                  src={images[activeImageIndex]?.url || 'https://images.unsplash.com/photo-1608571423902-eed4a5ad8108?auto=format&fit=crop&w=1000&q=80'}
+                  alt={product.title}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              )}
+
+              {/* Video Toggle Button if product has video */}
+              {product.videoUrl && (
+                <button
+                  type="button"
+                  onClick={() => setIsVideoActive(!isVideoActive)}
+                  style={{
+                    position: 'absolute',
+                    bottom: '16px',
+                    left: '16px',
+                    backgroundColor: isVideoActive ? '#C8822A' : 'rgba(28, 25, 23, 0.85)',
+                    backdropFilter: 'blur(6px)',
+                    color: '#FFF',
+                    padding: '8px 14px',
+                    borderRadius: '24px',
+                    border: 'none',
+                    fontSize: '0.785rem',
+                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+                    zIndex: 2,
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <Play size={14} fill="#FFF" />
+                  {isVideoActive ? 'View Photo' : 'Watch Product Video'}
+                </button>
+              )}
 
               {product.badgeText && (
-                <span className="product-badge" style={{ top: '16px', left: '16px', fontSize: '0.75rem', padding: '6px 12px' }}>
+                <span className="product-badge" style={{ top: '16px', left: '16px', fontSize: '0.75rem', padding: '6px 12px', zIndex: 2 }}>
                   {product.badgeText}
                 </span>
               )}

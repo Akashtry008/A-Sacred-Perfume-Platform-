@@ -35,24 +35,45 @@ export default function SeasonalBannerStrip({ banners }) {
             alignItems: 'center',
           }}
         >
-          {/* Panoramic Background Image (1920 × 450 px) */}
-          <img
-            src={bannerImg}
-            alt={activeBanner.heading || 'Seasonal Festive Samagri'}
-            onError={(e) => {
-              e.currentTarget.src = fallbackImage;
-            }}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              objectPosition: 'center',
-              display: 'block',
-              filter: 'brightness(0.85)',
-            }}
-          />
+          {/* Panoramic Background Media (Image or Video) */}
+          {activeBanner.mediaType === 'video' || activeBanner.videoUrl ? (
+            <video
+              src={activeBanner.videoUrl}
+              poster={bannerImg}
+              autoPlay
+              loop
+              muted
+              playsInline
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                objectPosition: 'center',
+                display: 'block',
+                filter: 'brightness(0.85)',
+              }}
+            />
+          ) : (
+            <img
+              src={bannerImg}
+              alt={activeBanner.heading || 'Seasonal Festive Samagri'}
+              onError={(e) => {
+                e.currentTarget.src = fallbackImage;
+              }}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                objectPosition: 'center',
+                display: 'block',
+                filter: 'brightness(0.85)',
+              }}
+            />
+          )}
 
           {/* Devotional Gradient Overlay for text clarity */}
           <div

@@ -3,6 +3,14 @@
   "cleanUrls": true,
   "rewrites": [
     {
+      "source": "/api/:match*",
+      "destination": "https://a-sacred-perfume-platform.onrender.com/api/:match*"
+    },
+    {
+      "source": "/uploads/:match*",
+      "destination": "https://a-sacred-perfume-platform.onrender.com/uploads/:match*"
+    },
+    {
       "source": "/((?!api|uploads|assets|favicon.ico|robots.txt|sitemap.xml).*)",
       "destination": "/index.html"
     }

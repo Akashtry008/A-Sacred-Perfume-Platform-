@@ -210,20 +210,38 @@ export default function PromoBannerSection({ content, hampers }) {
               justifyContent: 'center',
             }}
           >
-            <img
-              src={activeHamper.imageUrl || activeHamper.image || 'https://images.unsplash.com/photo-1512496015851-a90fb38ba796?auto=format&fit=crop&w=1200&q=80'}
-              alt={activeHamper.heading || "Sampoorna Vedic Puja Hamper"}
-              onError={(e) => {
-                e.currentTarget.src = 'https://images.unsplash.com/photo-1512496015851-a90fb38ba796?auto=format&fit=crop&w=1200&q=80';
-              }}
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                objectPosition: 'center',
-                display: 'block',
-              }}
-            />
+            {activeHamper.mediaType === 'video' || activeHamper.videoUrl ? (
+              <video
+                src={activeHamper.videoUrl}
+                poster={activeHamper.imageUrl || activeHamper.image}
+                autoPlay
+                loop
+                muted
+                playsInline
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  objectPosition: 'center',
+                  display: 'block',
+                }}
+              />
+            ) : (
+              <img
+                src={activeHamper.imageUrl || activeHamper.image || 'https://images.unsplash.com/photo-1512496015851-a90fb38ba796?auto=format&fit=crop&w=1200&q=80'}
+                alt={activeHamper.heading || "Sampoorna Vedic Puja Hamper"}
+                onError={(e) => {
+                  e.currentTarget.src = 'https://images.unsplash.com/photo-1512496015851-a90fb38ba796?auto=format&fit=crop&w=1200&q=80';
+                }}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  objectPosition: 'center',
+                  display: 'block',
+                }}
+              />
+            )}
 
             {/* Subtle sacred warm inner gradient overlay for text readability without obscuring hamper photo */}
             <div

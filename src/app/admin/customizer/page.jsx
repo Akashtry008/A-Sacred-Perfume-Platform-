@@ -25,6 +25,9 @@ import {
   MapPin,
   ExternalLink,
   BookOpen,
+  Plus,
+  Edit2,
+  X,
 } from 'lucide-react';
 import { useToast } from '@/context/ToastContext';
 import ImageUploadField from '@/components/admin/ImageUploadField';
@@ -86,6 +89,15 @@ export default function AdminCustomizerPage() {
   const [sections, setSections] = useState([]);
   const [isResettingSections, setIsResettingSections] = useState(false);
   const [deleteTargetSection, setDeleteTargetSection] = useState(null);
+  const [isAddingSection, setIsAddingSection] = useState(false);
+  const [newSection, setNewSection] = useState({
+    title: '',
+    subtitle: '',
+    category: 'Catalog',
+    key: '',
+    isEnabled: true,
+  });
+  const [editingSection, setEditingSection] = useState(null);
 
   // Admin Authentication Headers
   const getAdminHeaders = () => {
@@ -193,12 +205,12 @@ export default function AdminCustomizerPage() {
   const handleConfirmDeleteSection = async () => {
     if (!deleteTargetSection) return;
     try {
-      const res = await fetch(`/api/admin/sections/${deleteTargetSection.id}`, {
+      const res = await fetch(`/api/admin/sections/${deleteTargetSection.id}?hard=true`, {
         method: 'DELETE',
         headers: getAdminHeaders(),
       });
       if (res.ok) {
-        setSections((prev) => prev.filter((s) => s.id !== deleteTargetSection.id));
+        setSections((prev) => prev.filter((s) => s.id !== deleteTargetSection.id && s.key !== deleteTargetSection.key));
         showToast?.(`Section '${deleteTargetSection.title}' deleted from platform`, 'success');
       } else {
         showToast?.('Failed to delete section', 'error');
@@ -208,6 +220,71 @@ export default function AdminCustomizerPage() {
       showToast?.('Network error deleting section', 'error');
     } finally {
       setDeleteTargetSection(null);
+    }
+  };
+
+  // Create New Custom Section
+  const handleCreateSection = async (e) => {
+    e.preventDefault();
+    if (!newSection.title.trim()) return;
+    try {
+      const secKey = newSection.key.trim() || newSection.title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      const payload = {
+        title: newSection.title.trim(),
+        subtitle: newSection.subtitle.trim(),
+        category: newSection.category,
+        key: secKey,
+        id: secKey,
+        isEnabled: newSection.isEnabled,
+        isDeleted: false,
+        sortOrder: sections.length + 1,
+      };
+
+      const res = await fetch('/api/admin/sections', {
+        method: 'POST',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setSections((prev) => [...prev, data.section || payload]);
+        showToast?.(`Section '${payload.title}' created and added to storefront!`, 'success');
+        setIsAddingSection(false);
+        setNewSection({ title: '', subtitle: '', category: 'Catalog', key: '', isEnabled: true });
+      } else {
+        showToast?.('Failed to create section', 'error');
+      }
+    } catch (err) {
+      console.error('Error creating section:', err);
+      showToast?.('Error creating section', 'error');
+    }
+  };
+
+  // Update Existing Section
+  const handleUpdateSection = async (e) => {
+    e.preventDefault();
+    if (!editingSection) return;
+    try {
+      const res = await fetch(`/api/admin/sections/${editingSection.id}`, {
+        method: 'PUT',
+        headers: getAdminHeaders(),
+        body: JSON.stringify(editingSection),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setSections((prev) =>
+          prev.map((s) => (s.id === editingSection.id ? data.section || editingSection : s))
+        );
+        showToast?.(`Section '${editingSection.title}' updated successfully!`, 'success');
+        setEditingSection(null);
+      } else {
+        showToast?.('Failed to update section', 'error');
+      }
+    } catch (err) {
+      console.error('Error updating section:', err);
+      showToast?.('Error updating section', 'error');
     }
   };
 
@@ -761,6 +838,28 @@ export default function AdminCustomizerPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <button
                 type="button"
+                onClick={() => setIsAddingSection(true)}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: '#C8822A',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '0.825rem',
+                  fontWeight: 700,
+                  color: '#FFF',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 2px 6px rgba(200, 130, 42, 0.3)',
+                }}
+              >
+                <Plus size={15} />
+                <span>Add Custom Section</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={handleResetSections}
                 disabled={isResettingSections}
                 style={{
@@ -912,6 +1011,29 @@ export default function AdminCustomizerPage() {
                       >
                         {section.isEnabled ? <ToggleRight size={18} color="#C8822A" /> : <ToggleLeft size={18} color="#78716C" />}
                         <span>{section.isEnabled ? 'Enabled' : 'Disabled'}</span>
+                      </button>
+
+                      {/* Edit Section Button */}
+                      <button
+                        type="button"
+                        onClick={() => setEditingSection({ ...section })}
+                        style={{
+                          padding: '7px 12px',
+                          backgroundColor: '#FFF',
+                          border: '1px solid #D6D3D1',
+                          borderRadius: '6px',
+                          color: '#44403C',
+                          fontSize: '0.825rem',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                        }}
+                        title="Update section details"
+                      >
+                        <Edit2 size={14} color="#C8822A" />
+                        <span>Edit</span>
                       </button>
 
                       {/* Delete Section Button */}
@@ -1524,6 +1646,285 @@ export default function AdminCustomizerPage() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Add New Custom Section */}
+      {isAddingSection && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            backdropFilter: 'blur(3px)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+          }}
+          onClick={() => setIsAddingSection(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#FFF',
+              borderRadius: '14px',
+              padding: '28px',
+              maxWidth: '520px',
+              width: '100%',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.25)',
+              border: '1.5px solid #C8822A',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Plus size={20} color="#C8822A" />
+                <h3 style={{ margin: 0, fontSize: '1.25rem', color: '#1C1917', fontFamily: 'Georgia, serif' }}>
+                  Add Storefront Section
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddingSection(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#78716C' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateSection} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#44403C', marginBottom: '4px' }}>
+                  Section Title *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Sacred Ganga Aarti Live Stream"
+                  value={newSection.title}
+                  onChange={(e) => setNewSection({ ...newSection, title: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '6px', border: '1px solid #D6D3D1', fontSize: '0.85rem' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#44403C', marginBottom: '4px' }}>
+                  Subtitle / Devotional Description
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Daily dusk prayers and divine river consecration"
+                  value={newSection.subtitle}
+                  onChange={(e) => setNewSection({ ...newSection, subtitle: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '6px', border: '1px solid #D6D3D1', fontSize: '0.85rem' }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#44403C', marginBottom: '4px' }}>
+                    Category
+                  </label>
+                  <select
+                    value={newSection.category}
+                    onChange={(e) => setNewSection({ ...newSection, category: e.target.value })}
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '6px', border: '1px solid #D6D3D1', fontSize: '0.85rem', backgroundColor: '#FFF' }}
+                  >
+                    <option value="Header & Hero">Header & Hero</option>
+                    <option value="Catalog">Catalog</option>
+                    <option value="Promotions">Promotions</option>
+                    <option value="Interactive 3D">Interactive 3D</option>
+                    <option value="Interactive">Interactive</option>
+                    <option value="Brand Story">Brand Story</option>
+                    <option value="Social Proof">Social Proof</option>
+                    <option value="Support">Support</option>
+                    <option value="Custom">Custom Content</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#44403C', marginBottom: '4px' }}>
+                    Unique Identifier Key
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. ganga_aarti"
+                    value={newSection.key}
+                    onChange={(e) => setNewSection({ ...newSection, key: e.target.value })}
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '6px', border: '1px solid #D6D3D1', fontSize: '0.85rem' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                <input
+                  type="checkbox"
+                  id="new-sec-enabled"
+                  checked={newSection.isEnabled}
+                  onChange={(e) => setNewSection({ ...newSection, isEnabled: e.target.checked })}
+                  style={{ width: '16px', height: '16px', accentColor: '#C8822A' }}
+                />
+                <label htmlFor="new-sec-enabled" style={{ fontSize: '0.85rem', color: '#1C1917', fontWeight: 600 }}>
+                  Enable & Display immediately on storefront
+                </label>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsAddingSection(false)}
+                  style={{ padding: '9px 16px', backgroundColor: '#F5F5F4', border: '1px solid #D6D3D1', borderRadius: '8px', fontWeight: 600, color: '#44403C', cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{ padding: '9px 20px', backgroundColor: '#C8822A', color: '#FFF', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: 'pointer' }}
+                >
+                  Create Section
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Existing Section */}
+      {editingSection && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            backdropFilter: 'blur(3px)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+          }}
+          onClick={() => setEditingSection(null)}
+        >
+          <div
+            style={{
+              backgroundColor: '#FFF',
+              borderRadius: '14px',
+              padding: '28px',
+              maxWidth: '520px',
+              width: '100%',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.25)',
+              border: '1.5px solid #C8822A',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Edit2 size={18} color="#C8822A" />
+                <h3 style={{ margin: 0, fontSize: '1.25rem', color: '#1C1917', fontFamily: 'Georgia, serif' }}>
+                  Edit Storefront Section
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingSection(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#78716C' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateSection} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#44403C', marginBottom: '4px' }}>
+                  Section Title *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editingSection.title || ''}
+                  onChange={(e) => setEditingSection({ ...editingSection, title: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '6px', border: '1px solid #D6D3D1', fontSize: '0.85rem' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#44403C', marginBottom: '4px' }}>
+                  Subtitle / Description
+                </label>
+                <input
+                  type="text"
+                  value={editingSection.subtitle || ''}
+                  onChange={(e) => setEditingSection({ ...editingSection, subtitle: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '6px', border: '1px solid #D6D3D1', fontSize: '0.85rem' }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#44403C', marginBottom: '4px' }}>
+                    Category
+                  </label>
+                  <select
+                    value={editingSection.category || 'Catalog'}
+                    onChange={(e) => setEditingSection({ ...editingSection, category: e.target.value })}
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '6px', border: '1px solid #D6D3D1', fontSize: '0.85rem', backgroundColor: '#FFF' }}
+                  >
+                    <option value="Header & Hero">Header & Hero</option>
+                    <option value="Catalog">Catalog</option>
+                    <option value="Promotions">Promotions</option>
+                    <option value="Interactive 3D">Interactive 3D</option>
+                    <option value="Interactive">Interactive</option>
+                    <option value="Brand Story">Brand Story</option>
+                    <option value="Social Proof">Social Proof</option>
+                    <option value="Support">Support</option>
+                    <option value="Custom">Custom Content</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#44403C', marginBottom: '4px' }}>
+                    Identifier Key
+                  </label>
+                  <input
+                    type="text"
+                    value={editingSection.key || editingSection.id || ''}
+                    disabled
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '6px', border: '1px solid #E5E7EB', backgroundColor: '#F3F4F6', fontSize: '0.85rem', color: '#6B7280' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                <input
+                  type="checkbox"
+                  id="edit-sec-enabled"
+                  checked={editingSection.isEnabled}
+                  onChange={(e) => setEditingSection({ ...editingSection, isEnabled: e.target.checked })}
+                  style={{ width: '16px', height: '16px', accentColor: '#C8822A' }}
+                />
+                <label htmlFor="edit-sec-enabled" style={{ fontSize: '0.85rem', color: '#1C1917', fontWeight: 600 }}>
+                  Active on Storefront
+                </label>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => setEditingSection(null)}
+                  style={{ padding: '9px 16px', backgroundColor: '#F5F5F4', border: '1px solid #D6D3D1', borderRadius: '8px', fontWeight: 600, color: '#44403C', cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{ padding: '9px 20px', backgroundColor: '#C8822A', color: '#FFF', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: 'pointer' }}
+                >
+                  Save Section Changes
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

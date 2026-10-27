@@ -44,21 +44,43 @@ export default function HeroSlider({ slides }) {
       }}
       aria-label="Featured Collections"
     >
-      {/* Background Image with Smooth Crossfade & Dark Vignette Overlay */}
-      <div
-        key={slide.desktopImage || current}
-        style={{
-          position: 'absolute',
-          inset: 0,
-          backgroundImage: `url(${slide.desktopImage})`,
-          backgroundSize: 'cover',
-          backgroundPosition: 'center',
-          opacity: 0.38,
-          transition: 'all 0.8s ease-in-out',
-          animation: 'fadeIn 0.8s ease-in-out',
-          transform: `scale(1.05) translate(${tilt.y * 1.5}px, ${tilt.x * 1.5}px)`,
-        }}
-      />
+      {/* Background Media (Image or Video) with Smooth Crossfade & Dark Vignette Overlay */}
+      {slide.mediaType === 'video' || slide.videoUrl ? (
+        <video
+          key={slide.videoUrl || current}
+          src={slide.videoUrl}
+          poster={slide.desktopImage}
+          autoPlay
+          loop
+          muted
+          playsInline
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            opacity: 0.45,
+            transition: 'opacity 0.8s ease-in-out',
+            transform: `scale(1.05) translate(${tilt.y * 1.5}px, ${tilt.x * 1.5}px)`,
+          }}
+        />
+      ) : (
+        <div
+          key={slide.desktopImage || current}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            backgroundImage: `url(${slide.desktopImage})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            opacity: 0.38,
+            transition: 'all 0.8s ease-in-out',
+            animation: 'fadeIn 0.8s ease-in-out',
+            transform: `scale(1.05) translate(${tilt.y * 1.5}px, ${tilt.x * 1.5}px)`,
+          }}
+        />
+      )}
       <div
         style={{
           position: 'absolute',

@@ -5,6 +5,7 @@ import { formatPrice } from '@/lib/utils';
 import { useToast } from '@/context/ToastContext';
 import { db } from '@/lib/db';
 import ImageUploadField from '@/components/admin/ImageUploadField';
+import VideoUploadField from '@/components/admin/VideoUploadField';
 
 export default function AdminProductsPage() {
   const { showToast } = useToast();
@@ -25,6 +26,7 @@ export default function AdminProductsPage() {
     fragrance: 'Mysore Sandalwood',
     stockQuantity: 100,
     imageUrl: 'https://images.unsplash.com/photo-1608571423902-eed4a5ad8108?auto=format&fit=crop&w=800&q=80',
+    videoUrl: '',
     shortDesc: '100% bambooless devotional agarbatti.',
     category: 'cat-incense',
     isBestseller: false,
@@ -143,6 +145,7 @@ export default function AdminProductsPage() {
         fragrance: 'Mysore Sandalwood',
         stockQuantity: 100,
         imageUrl: 'https://images.unsplash.com/photo-1608571423902-eed4a5ad8108?auto=format&fit=crop&w=800&q=80',
+        videoUrl: '',
         shortDesc: '100% bambooless devotional agarbatti.',
         category: 'cat-incense',
         isBestseller: false,
@@ -167,6 +170,7 @@ export default function AdminProductsPage() {
       fragrance: prod.fragrance || 'Mysore Sandalwood',
       category: prod.categoryIds?.[0] || 'cat-incense',
       imageUrl: prod.images?.[0]?.url || 'https://images.unsplash.com/photo-1608571423902-eed4a5ad8108?auto=format&fit=crop&w=800&q=80',
+      videoUrl: prod.videoUrl || prod.video || '',
       isBestseller: prod.isBestseller || false,
     });
   };
@@ -186,6 +190,7 @@ export default function AdminProductsPage() {
         categoryIds: [editingProduct.category],
         isBestseller: editingProduct.isBestseller,
         images: [{ url: editingProduct.imageUrl, altText: editingProduct.title }],
+        videoUrl: editingProduct.videoUrl || '',
         variants: [
           {
             id: `v-${editingProduct.id}-1`,
@@ -425,9 +430,9 @@ export default function AdminProductsPage() {
                 </div>
               </div>
 
-              {/* Direct Image Upload Field */}
+              {/* Direct Image Upload Field (Kept as primary option / thumbnail) */}
               <ImageUploadField
-                label="Product Image Photo"
+                label="Product Image Photo (Primary Thumbnail)"
                 recommendedWidth={800}
                 recommendedHeight={800}
                 aspectRatioText="1:1 Square"
@@ -435,6 +440,15 @@ export default function AdminProductsPage() {
                 onChange={(url) => setNewProd({ ...newProd, imageUrl: url })}
                 helperText="Upload 800 × 800 px high-contrast square photo directly from your device."
                 required
+              />
+
+              {/* Direct Video Upload Field (Infinite hover video) */}
+              <VideoUploadField
+                label="Infinite Hover Video (Optional)"
+                value={newProd.videoUrl}
+                onChange={(url) => setNewProd({ ...newProd, videoUrl: url })}
+                maxSizeMB={35}
+                helperText="Allowed: MP4, WebM (Max 35MB). When devotees hover over this product on the website, this video will play in an infinite loop automatically."
               />
 
               <div>
@@ -627,7 +641,7 @@ export default function AdminProductsPage() {
 
               {/* Direct Image Upload Field */}
               <ImageUploadField
-                label="Product Image Photo"
+                label="Product Image Photo (Primary Thumbnail)"
                 recommendedWidth={800}
                 recommendedHeight={800}
                 aspectRatioText="1:1 Square"
@@ -635,6 +649,15 @@ export default function AdminProductsPage() {
                 onChange={(url) => setEditingProduct({ ...editingProduct, imageUrl: url })}
                 helperText="Upload 800 × 800 px direct square photo. Inspects resolution automatically."
                 required
+              />
+
+              {/* Direct Video Upload Field (Infinite hover video) */}
+              <VideoUploadField
+                label="Infinite Hover Video (Optional)"
+                value={editingProduct.videoUrl}
+                onChange={(url) => setEditingProduct({ ...editingProduct, videoUrl: url })}
+                maxSizeMB={35}
+                helperText="Allowed: MP4, WebM (Max 35MB). Will play automatically in an infinite loop on card hover. Click 'Remove Video' above to delete it."
               />
 
               <div>
@@ -707,7 +730,14 @@ export default function AdminProductsPage() {
                         style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #EAE3D6' }}
                       />
                       <div>
-                        <div style={{ fontWeight: 600, color: '#1C1917' }}>{prod.title}</div>
+                        <div style={{ fontWeight: 600, color: '#1C1917', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          {prod.title}
+                          {(prod.videoUrl || prod.video) && (
+                            <span style={{ fontSize: '0.65rem', backgroundColor: '#FEF3C7', color: '#92400E', padding: '1px 6px', borderRadius: '4px', fontWeight: 600, border: '1px solid #FDE68A' }}>
+                              🎬 Video Active
+                            </span>
+                          )}
+                        </div>
                         <div style={{ fontSize: '0.75rem', color: '#78716C' }}>/{prod.slug}</div>
                       </div>
                     </div>

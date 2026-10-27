@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/context/ToastContext';
 import ImageUploadField from '@/components/admin/ImageUploadField';
+import VideoUploadField from '@/components/admin/VideoUploadField';
 import { db } from '@/lib/db';
 import { getAdminAuthHeaders } from '@/lib/utils';
 
@@ -848,9 +849,61 @@ export default function AdminBannersPage() {
                     />
                   </div>
 
+                  {/* Media Format Toggle: Image vs Video Banner */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#44403C', marginBottom: '6px' }}>
+                      Media Presentation Mode
+                    </label>
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleSlideChange(idx, 'mediaType', 'image')}
+                        style={{
+                          padding: '6px 14px',
+                          borderRadius: '6px',
+                          border: slide.mediaType !== 'video' ? '1.5px solid #C8822A' : '1px solid #D6D3D1',
+                          backgroundColor: slide.mediaType !== 'video' ? '#FAF0E4' : '#FFF',
+                          color: slide.mediaType !== 'video' ? '#C8822A' : '#57534E',
+                          fontWeight: 600,
+                          fontSize: '0.8rem',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        🖼️ Static Photo Banner
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSlideChange(idx, 'mediaType', 'video')}
+                        style={{
+                          padding: '6px 14px',
+                          borderRadius: '6px',
+                          border: slide.mediaType === 'video' ? '1.5px solid #C8822A' : '1px solid #D6D3D1',
+                          backgroundColor: slide.mediaType === 'video' ? '#FAF0E4' : '#FFF',
+                          color: slide.mediaType === 'video' ? '#C8822A' : '#57534E',
+                          fontWeight: 600,
+                          fontSize: '0.8rem',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        🎬 Video Background Banner
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Video Upload Field if Video Banner selected */}
+                  {slide.mediaType === 'video' && (
+                    <VideoUploadField
+                      label="Hero Video Background (MP4 / WebM)"
+                      value={slide.videoUrl || ''}
+                      onChange={(url) => handleSlideChange(idx, 'videoUrl', url)}
+                      maxSizeMB={35}
+                      helperText="Allowed: MP4, WebM (Max 35MB). Loops automatically and muted in hero background."
+                    />
+                  )}
+
                   {/* Direct Image Upload Field with Fixed Size */}
                   <ImageUploadField
-                    label="Hero Slide Background Image"
+                    label={slide.mediaType === 'video' ? "Poster Fallback Image (Shown while video loads)" : "Hero Slide Background Image"}
                     recommendedWidth={1920}
                     recommendedHeight={800}
                     aspectRatioText="16:9 / 12:5 Widescreen"
@@ -1249,9 +1302,61 @@ export default function AdminBannersPage() {
                   </div>
                 </div>
 
+                {/* Media Format Toggle: Image vs Video Poster */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#44403C', marginBottom: '6px' }}>
+                    Hamper Poster Format
+                  </label>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                    <button
+                      type="button"
+                      onClick={() => handleHamperChange('mediaType', 'image')}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: '6px',
+                        border: currHamper.mediaType !== 'video' ? '1.5px solid #C8822A' : '1px solid #D6D3D1',
+                        backgroundColor: currHamper.mediaType !== 'video' ? '#FAF0E4' : '#FFF',
+                        color: currHamper.mediaType !== 'video' ? '#C8822A' : '#57534E',
+                        fontWeight: 600,
+                        fontSize: '0.8rem',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      🖼️ Static Box Photo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleHamperChange('mediaType', 'video')}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: '6px',
+                        border: currHamper.mediaType === 'video' ? '1.5px solid #C8822A' : '1px solid #D6D3D1',
+                        backgroundColor: currHamper.mediaType === 'video' ? '#FAF0E4' : '#FFF',
+                        color: currHamper.mediaType === 'video' ? '#C8822A' : '#57534E',
+                        fontWeight: 600,
+                        fontSize: '0.8rem',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      🎬 Video Box Showcase
+                    </button>
+                  </div>
+                </div>
+
+                {/* Video Upload if Video Poster */}
+                {currHamper.mediaType === 'video' && (
+                  <VideoUploadField
+                    label="Festive Box Showcase Video"
+                    value={currHamper.videoUrl || ''}
+                    onChange={(url) => handleHamperChange('videoUrl', url)}
+                    maxSizeMB={35}
+                    helperText="Allowed: MP4, WebM (Max 35MB). Loops automatically in the grand hamper showcase."
+                  />
+                )}
+
                 {/* Direct Hamper Image Upload Field */}
                 <ImageUploadField
-                  label={`Hamper #${activeHamperIndex + 1} Box Poster Image`}
+                  label={currHamper.mediaType === 'video' ? `Hamper #${activeHamperIndex + 1} Poster / Fallback Image` : `Hamper #${activeHamperIndex + 1} Box Poster Image`}
                   recommendedWidth={1000}
                   recommendedHeight={1000}
                   aspectRatioText="1:1 Perfect Square"
@@ -1511,9 +1616,61 @@ export default function AdminBannersPage() {
                       </div>
                     </div>
 
+                    {/* Media Format Toggle: Image vs Video Strip */}
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#44403C', marginBottom: '6px' }}>
+                        Strip Presentation Format
+                      </label>
+                      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleSeasonalChange(idx, 'mediaType', 'image')}
+                          style={{
+                            padding: '6px 14px',
+                            borderRadius: '6px',
+                            border: sb.mediaType !== 'video' ? '1.5px solid #C8822A' : '1px solid #D6D3D1',
+                            backgroundColor: sb.mediaType !== 'video' ? '#FAF0E4' : '#FFF',
+                            color: sb.mediaType !== 'video' ? '#C8822A' : '#57534E',
+                            fontWeight: 600,
+                            fontSize: '0.8rem',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          🖼️ Static Strip Image
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSeasonalChange(idx, 'mediaType', 'video')}
+                          style={{
+                            padding: '6px 14px',
+                            borderRadius: '6px',
+                            border: sb.mediaType === 'video' ? '1.5px solid #C8822A' : '1px solid #D6D3D1',
+                            backgroundColor: sb.mediaType === 'video' ? '#FAF0E4' : '#FFF',
+                            color: sb.mediaType === 'video' ? '#C8822A' : '#57534E',
+                            fontWeight: 600,
+                            fontSize: '0.8rem',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          🎬 Video Strip Banner
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Video Upload if Video Banner Strip */}
+                    {sb.mediaType === 'video' && (
+                      <VideoUploadField
+                        label="Seasonal Panoramic Video Strip"
+                        value={sb.videoUrl || ''}
+                        onChange={(url) => handleSeasonalChange(idx, 'videoUrl', url)}
+                        maxSizeMB={35}
+                        helperText="Allowed: MP4, WebM (Max 35MB). Loops smoothly across mid-homepage strip."
+                      />
+                    )}
+
                     {/* Direct Seasonal Image Upload Field */}
                     <ImageUploadField
-                      label="Seasonal Panoramic Strip Photo"
+                      label={sb.mediaType === 'video' ? "Poster / Fallback Panoramic Photo" : "Seasonal Panoramic Strip Photo"}
                       recommendedWidth={1920}
                       recommendedHeight={450}
                       aspectRatioText="4.2:1 Panoramic Strip"

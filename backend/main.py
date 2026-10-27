@@ -1677,6 +1677,7 @@ async def create_admin_section(payload: Dict[str, Any] = Body(...), admin: Dict[
 
 
 @app.put("/api/admin/sections/{section_id}")
+@app.patch("/api/admin/sections/{section_id}")
 async def update_admin_section(section_id: str, payload: Dict[str, Any] = Body(...), admin: Dict[str, Any] = Depends(require_admin_user)):
     payload["updatedAt"] = datetime.now(timezone.utc).isoformat()
     if "_id" in payload:
@@ -1689,8 +1690,12 @@ async def update_admin_section(section_id: str, payload: Dict[str, Any] = Body(.
 
 
 @app.delete("/api/admin/sections/{section_id}")
-async def delete_admin_section(section_id: str, admin: Dict[str, Any] = Depends(require_admin_user)):
-    """Marks section as deleted so it never appears on storefront."""
+async def delete_admin_section(section_id: str, hard: bool = Query(False), admin: Dict[str, Any] = Depends(require_admin_user)):
+    """Deletes or marks section as deleted so it never appears on storefront."""
+    if hard:
+        await sections_col.delete_one({"$or": [{"id": section_id}, {"key": section_id}]})
+        return {"success": True, "message": f"Section '{section_id}' permanently deleted successfully"}
+
     await sections_col.update_one(
         {"$or": [{"id": section_id}, {"key": section_id}]},
         {"$set": {"isDeleted": True, "isEnabled": False, "deletedAt": datetime.now(timezone.utc).isoformat()}}
@@ -2202,16 +2207,42 @@ async def delete_blog(id_or_slug: str):
 
 
 @app.post("/api/admin/upload")
+@app.post("/api/admin/upload-video")
 async def upload_file(file: UploadFile = File(...)):
     try:
-        ext = os.path.splitext(file.filename or "")[1].lower() or ".jpg"
-        unique_name = f"upload_{uuid.uuid4().hex[:10]}{ext}"
-        filepath = os.path.join(UPLOADS_DIR, unique_name)
+        allowed_extensions = {
+            ".png", ".jpg", ".jpeg", ".webp", ".svg", ".gif", ".avif",
+            ".mp4", ".webm", ".mov", ".m4v", ".ogg"
+        }
+        orig_name = file.filename or "media.jpg"
+        ext = os.path.splitext(orig_name)[1].lower()
+        if not ext or ext not in allowed_extensions:
+            ext = ".jpg"
+
         contents = await file.read()
+        max_size = 35 * 1024 * 1024  # 35MB limit
+        if len(contents) > max_size:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File exceeds maximum allowed size of 35MB (Uploaded: {len(contents) / (1024 * 1024):.2f}MB)"
+            )
+
+        is_video = ext in {".mp4", ".webm", ".mov", ".m4v", ".ogg"}
+        prefix = "video_" if is_video else "upload_"
+        unique_name = f"{prefix}{uuid.uuid4().hex[:10]}{ext}"
+        filepath = os.path.join(UPLOADS_DIR, unique_name)
         with open(filepath, "wb") as f:
             f.write(contents)
         url = f"/uploads/{unique_name}"
-        return {"success": True, "url": url}
+        return {
+            "success": True,
+            "url": url,
+            "filename": unique_name,
+            "size": len(contents),
+            "mediaType": "video" if is_video else "image"
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 

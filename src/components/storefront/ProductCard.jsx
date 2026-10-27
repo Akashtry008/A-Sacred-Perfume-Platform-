@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Link from '@/components/common/Link';
-import { Heart, Star, ShoppingBag } from 'lucide-react';
+import { Heart, Star, ShoppingBag, Play } from 'lucide-react';
 import { useCart } from '@/context/CartContext';
 import { useWishlist } from '@/context/WishlistContext';
 import { formatPrice, calculateDiscount } from '@/lib/utils';
@@ -9,6 +9,7 @@ import { flyToDestination } from '@/lib/flyAnimation';
 export default function ProductCard({ product }) {
   const { addToCart, isLoading } = useCart();
   const { toggleWishlist, isWishlisted } = useWishlist();
+  const videoRef = useRef(null);
 
   // Selected variant state for interactive pill selection
   const defaultVariant = product.variants?.find((v) => v.isDefault) || product.variants?.[0] || {};
@@ -17,11 +18,31 @@ export default function ProductCard({ product }) {
   const discount = calculateDiscount(selectedVariant.price, selectedVariant.compareAtPrice);
   const primaryImage = product.images?.[0]?.url || 'https://images.unsplash.com/photo-1608571423902-eed4a5ad8108?auto=format&fit=crop&w=600&q=80';
   const secondaryImage = product.images?.[1]?.url || primaryImage;
+  const videoUrl = product.videoUrl || product.video || null;
 
   const [hovered, setHovered] = useState(false);
   const [tilt, setTilt] = useState({ x: 0, y: 0 });
   const [isTilting, setIsTilting] = useState(false);
   const isSaved = isWishlisted(product.id);
+
+  // Automatic infinite video playback on hover
+  useEffect(() => {
+    if (!videoRef.current || !videoUrl) return;
+
+    if (hovered) {
+      const playPromise = videoRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {
+          // Auto-play was prevented (browser policy or user interaction needed)
+        });
+      }
+    } else {
+      videoRef.current.pause();
+      try {
+        videoRef.current.currentTime = 0; // Return to starting frame for thumbnail
+      } catch (e) {}
+    }
+  }, [hovered, videoUrl]);
 
   const handleCardMouseMove = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -36,6 +57,7 @@ export default function ProductCard({ product }) {
   const handleCardMouseLeave = () => {
     setTilt({ x: 0, y: 0 });
     setIsTilting(false);
+    setHovered(false);
   };
 
   const handleQuickAdd = async (e) => {
@@ -66,13 +88,68 @@ export default function ProductCard({ product }) {
         className="product-card-media"
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
+        style={{ position: 'relative', overflow: 'hidden' }}
       >
-        <Link href={`/products/${product.slug}`}>
-          <img
-            src={hovered ? secondaryImage : primaryImage}
-            alt={product.title}
-            loading="lazy"
-          />
+        <Link href={`/products/${product.slug}`} style={{ display: 'block', width: '100%', height: '100%' }}>
+          {videoUrl ? (
+            <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+              <video
+                ref={videoRef}
+                src={videoUrl}
+                poster={primaryImage}
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  display: 'block',
+                  transition: 'transform 0.4s ease',
+                  transform: hovered ? 'scale(1.04)' : 'scale(1)',
+                }}
+              />
+              {/* Subtle Video Hover Badge */}
+              <span
+                style={{
+                  position: 'absolute',
+                  bottom: '10px',
+                  left: '10px',
+                  backgroundColor: hovered ? 'rgba(200, 130, 42, 0.9)' : 'rgba(28, 25, 23, 0.75)',
+                  backdropFilter: 'blur(4px)',
+                  color: '#FFF',
+                  fontSize: '0.65rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                  padding: '3px 8px',
+                  borderRadius: '20px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  zIndex: 2,
+                  transition: 'all 0.3s ease',
+                }}
+              >
+                <Play size={9} fill="#FFF" /> {hovered ? 'Playing Video' : 'Video Preview'}
+              </span>
+            </div>
+          ) : (
+            <img
+              src={hovered ? secondaryImage : primaryImage}
+              alt={product.title}
+              loading="lazy"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                display: 'block',
+                transition: 'transform 0.4s ease',
+                transform: hovered ? 'scale(1.04)' : 'scale(1)',
+              }}
+            />
+          )}
         </Link>
 
         {/* 3D Holographic Gold Specular Sheen */}
@@ -90,7 +167,7 @@ export default function ProductCard({ product }) {
         )}
 
         {product.badgeText && (
-          <span className="product-badge">{product.badgeText}</span>
+          <span className="product-badge" style={{ zIndex: 4 }}>{product.badgeText}</span>
         )}
 
         <button
@@ -104,6 +181,7 @@ export default function ProductCard({ product }) {
           }}
           className={`wishlist-toggle-btn ${isSaved ? 'active' : ''}`}
           aria-label={isSaved ? 'Remove from wishlist' : 'Add to wishlist'}
+          style={{ zIndex: 4 }}
         >
           <Heart size={16} fill={isSaved ? '#9B3828' : 'none'} color={isSaved ? '#9B3828' : '#1C1917'} />
         </button>
