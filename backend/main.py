@@ -1963,6 +1963,71 @@ async def accept_order_and_generate_bill(order_id: str, payload: Dict[str, Any] 
     return await update_order_status(order_id, accept_payload)
 
 
+@app.post("/api/admin/orders/batch-accept")
+async def batch_accept_orders(payload: Dict[str, Any] = Body(default={})):
+    """Accept multiple or all orders at once and generate delivery bills, parcel box IDs, and tracking numbers"""
+    order_ids = payload.get("orderIds")  # Optional list of specific IDs
+    target_status = payload.get("status", "PROCESSING")
+    shipping_courier = payload.get("shippingCourier", "Delhivery Express")
+    now = datetime.now(timezone.utc).isoformat()
+    year = datetime.now().strftime("%Y")
+
+    query = {}
+    if order_ids and len(order_ids) > 0:
+        query = {"$or": [{"id": {"$in": order_ids}}, {"orderNumber": {"$in": order_ids}}]}
+    else:
+        # If no specific IDs provided, accept all orders not yet cancelled
+        status_filter = payload.get("filterStatus")
+        if status_filter and status_filter != "ALL":
+            query["status"] = status_filter
+        else:
+            query["status"] = {"$ne": "CANCELLED"}
+
+    cursor = orders_col.find(query)
+    orders = await cursor.to_list(length=500)
+
+    updated_orders = []
+    for order in orders:
+        updates = {
+            "status": target_status,
+            "fulfillmentStatus": target_status,
+            "shippingCourier": order.get("shippingCourier") or shipping_courier,
+            "courier": order.get("shippingCourier") or shipping_courier,
+            "updatedAt": now,
+        }
+
+        # Ensure billId
+        short_ref = (order.get("orderNumber") or uuid.uuid4().hex[:6]).replace("VP-", "").replace("-", "")
+        bill_id = order.get("billId") or f"VP-BILL-{year}-{short_ref[-5:].upper()}"
+        updates["billId"] = bill_id
+        if not order.get("billGeneratedAt"):
+            updates["billGeneratedAt"] = now
+        if not order.get("acceptedAt"):
+            updates["acceptedAt"] = now
+
+        # Ensure consignmentId
+        consignment_id = order.get("consignmentId") or f"VP-PKG-{uuid.uuid4().hex[:8].upper()}"
+        updates["consignmentId"] = consignment_id
+
+        # Ensure trackingNumber
+        tracking_num = order.get("trackingNumber")
+        if not tracking_num or tracking_num.startswith("TRK-"):
+            tracking_num = f"DELH-VP-{uuid.uuid4().hex[:8].upper()}"
+            updates["trackingNumber"] = tracking_num
+
+        await orders_col.update_one({"_id": order["_id"]}, {"$set": updates})
+        updated_doc = await orders_col.find_one({"_id": order["_id"]})
+        if updated_doc:
+            updated_orders.append(clean_mongo_doc(updated_doc))
+
+    return {
+        "success": True,
+        "message": f"Successfully accepted {len(updated_orders)} orders and generated delivery bills",
+        "orders": updated_orders,
+        "count": len(updated_orders),
+    }
+
+
 @app.post("/api/admin/orders/{order_id}/whatsapp-dispatch")
 async def log_whatsapp_dispatch(order_id: str, payload: Dict[str, Any] = Body(default={})):
     """Logs WhatsApp dispatch notification to activity log and updates order with dispatch history"""

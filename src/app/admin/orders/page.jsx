@@ -18,6 +18,11 @@ import {
   MessageCircle,
   Send,
   Copy,
+  Download,
+  CheckSquare,
+  Square,
+  Layers,
+  List,
 } from 'lucide-react';
 import { formatPrice, formatDate } from '@/lib/utils';
 import { useToast } from '@/context/ToastContext';
@@ -29,21 +34,19 @@ export default function AdminOrdersPage() {
   const [filterStatus, setFilterStatus] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOrder, setSelectedOrder] = useState(null);
-  const [printingOrder, setPrintingOrder] = useState(null);
+  
+  // Printing states (supports single order or batch multi-order generation)
+  const [printingOrders, setPrintingOrders] = useState([]);
+  const [printViewTab, setPrintViewTab] = useState('slips'); // 'slips' | 'manifest'
+  const [selectedOrderIds, setSelectedOrderIds] = useState(new Set());
+  
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isBatchUpdating, setIsBatchUpdating] = useState(false);
 
   // Status edit form state
   const [editStatus, setEditStatus] = useState('');
   const [editCourier, setEditCourier] = useState('');
   const [editTracking, setEditTracking] = useState('');
-
-  const fetchOrders = async () => {
-    try {
-      const res = await fetch('/api/checkout');
-    } catch (e) {
-      // fallback
-    }
-  };
 
   useEffect(() => {
     loadOrdersList();
@@ -74,6 +77,7 @@ export default function AdminOrdersPage() {
     setEditTracking(order.trackingNumber || '');
   };
 
+  // Individual Order Accept & Bill Generation
   const handleAcceptOrder = async (order) => {
     setIsUpdating(true);
     try {
@@ -106,13 +110,215 @@ export default function AdminOrdersPage() {
         setSelectedOrder(updated);
         setEditStatus(updated.status);
       }
-      setPrintingOrder(updated);
+      setPrintingOrders([updated]);
+      setPrintViewTab('slips');
     } catch (err) {
       showToast?.(err.message || 'Error accepting order', 'error');
     } finally {
       setIsUpdating(false);
     }
   };
+
+  // Individual Print Bill
+  const handlePrintIndividualBill = (order) => {
+    const preparedOrder = order.billId ? order : {
+      ...order,
+      billId: `VP-BILL-2026-${(order.orderNumber || order.id).replace('VP-', '').slice(-5).toUpperCase()}`,
+      consignmentId: order.consignmentId || `VP-PKG-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
+      trackingNumber: order.trackingNumber || `DELH-VP-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
+      shippingCourier: order.shippingCourier || 'Delhivery Express',
+    };
+    setPrintingOrders([preparedOrder]);
+    setPrintViewTab('slips');
+  };
+
+  // Selection Checkbox Handlers
+  const handleToggleSelectAll = () => {
+    if (selectedOrderIds.size === filteredOrders.length && filteredOrders.length > 0) {
+      setSelectedOrderIds(new Set());
+    } else {
+      setSelectedOrderIds(new Set(filteredOrders.map((o) => o.id)));
+    }
+  };
+
+  const handleToggleSelectOrder = (orderId) => {
+    setSelectedOrderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(orderId)) {
+        next.delete(orderId);
+      } else {
+        next.add(orderId);
+      }
+      return next;
+    });
+  };
+
+  // Batch Accept All Orders (or Accept Selected)
+  const handleBatchAcceptOrders = async () => {
+    const targetOrders = selectedOrderIds.size > 0
+      ? filteredOrders.filter((o) => selectedOrderIds.has(o.id))
+      : filteredOrders.filter((o) => o.status !== 'CANCELLED' && !o.billId);
+
+    const idsToAccept = targetOrders.map((o) => o.id);
+
+    if (idsToAccept.length === 0) {
+      showToast?.('All selected or filtered orders already have generated delivery bills.', 'info');
+      return;
+    }
+
+    setIsBatchUpdating(true);
+    try {
+      const res = await fetch('/api/admin/orders/batch-accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderIds: idsToAccept,
+          status: 'PROCESSING',
+          shippingCourier: 'Delhivery Express',
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || data.detail || 'Failed to accept orders');
+
+      const updatedMap = new Map((data.orders || []).map((o) => [o.id, o]));
+      const now = new Date().toISOString();
+
+      const nextOrders = orders.map((o) => {
+        if (updatedMap.has(o.id)) return updatedMap.get(o.id);
+        if (idsToAccept.includes(o.id)) {
+          const shortRef = (o.orderNumber || o.id).replace('VP-', '').slice(-5).toUpperCase();
+          return {
+            ...o,
+            status: 'PROCESSING',
+            billId: o.billId || `VP-BILL-2026-${shortRef}`,
+            consignmentId: o.consignmentId || `VP-PKG-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
+            trackingNumber: o.trackingNumber || `DELH-VP-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
+            shippingCourier: o.shippingCourier || 'Delhivery Express',
+            acceptedAt: now,
+            billGeneratedAt: now,
+          };
+        }
+        return o;
+      });
+
+      setOrders(nextOrders);
+      setSelectedOrderIds(new Set());
+      showToast?.(`Accepted ${idsToAccept.length} orders & generated all delivery bills!`, 'success');
+
+      // Automatically open all newly accepted bills for batch printing
+      const acceptedBills = nextOrders.filter((o) => idsToAccept.includes(o.id));
+      if (acceptedBills.length > 0) {
+        setPrintingOrders(acceptedBills);
+        setPrintViewTab('slips');
+      }
+    } catch (err) {
+      showToast?.(err.message || 'Error accepting orders in batch', 'error');
+    } finally {
+      setIsBatchUpdating(false);
+    }
+  };
+
+  // Batch Print All Bills / Generate Manifest List
+  const handlePrintAllBills = (viewMode = 'slips') => {
+    const sourceList = selectedOrderIds.size > 0
+      ? filteredOrders.filter((o) => selectedOrderIds.has(o.id))
+      : filteredOrders;
+
+    if (sourceList.length === 0) {
+      showToast?.('No orders available to generate bills.', 'error');
+      return;
+    }
+
+    // Ensure all have billId, consignmentId, and tracking preview
+    const prepared = sourceList.map((o) => {
+      if (o.billId) return o;
+      const shortRef = (o.orderNumber || o.id).replace('VP-', '').slice(-5).toUpperCase();
+      return {
+        ...o,
+        billId: `VP-BILL-2026-${shortRef}`,
+        consignmentId: o.consignmentId || `VP-PKG-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
+        trackingNumber: o.trackingNumber || `DELH-VP-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
+        shippingCourier: o.shippingCourier || 'Delhivery Express',
+      };
+    });
+
+    setPrintingOrders(prepared);
+    setPrintViewTab(viewMode);
+  };
+
+  // Export All Bills to CSV
+  const handleExportBillsCSV = () => {
+    const sourceList = selectedOrderIds.size > 0
+      ? filteredOrders.filter((o) => selectedOrderIds.has(o.id))
+      : filteredOrders;
+
+    if (sourceList.length === 0) {
+      showToast?.('No orders to export.', 'info');
+      return;
+    }
+
+    const headers = [
+      'Order Number',
+      'Delivery Bill ID',
+      'Parcel Box ID',
+      'Order Date',
+      'Customer Name',
+      'Customer Phone',
+      'Customer Email',
+      'Delivery Address',
+      'City',
+      'State',
+      'Pincode',
+      'Courier Partner',
+      'AWB Tracking Number',
+      'Total Items',
+      'Items Detail',
+      'Total Amount (INR)',
+      'Fulfillment Status',
+      'Payment Status',
+    ];
+
+    const rows = sourceList.map((o) => {
+      const billId = o.billId || `VP-BILL-2026-${(o.orderNumber || '').replace('VP-', '').slice(-5)}`;
+      const boxId = o.consignmentId || `VP-PKG-${(o.orderNumber || '').replace('VP-', '')}`;
+      const itemsDesc = (o.items || []).map((it) => `${it.productTitle} (${it.quantity})`).join('; ');
+      const addr = o.shippingAddress || {};
+      const fullAddr = `${addr.addressLine1 || addr.streetLine1 || ''} ${addr.addressLine2 || addr.streetLine2 || ''}`.trim();
+
+      return [
+        `"${o.orderNumber || ''}"`,
+        `"${billId}"`,
+        `"${boxId}"`,
+        `"${formatDate(o.createdAt)}"`,
+        `"${addr.fullName || 'Guest Devotee'}"`,
+        `"${o.guestPhone || addr.phone || ''}"`,
+        `"${o.guestEmail || addr.email || ''}"`,
+        `"${fullAddr.replace(/"/g, '""')}"`,
+        `"${addr.city || ''}"`,
+        `"${addr.state || ''}"`,
+        `"${addr.postalCode || ''}"`,
+        `"${o.shippingCourier || 'Delhivery Express'}"`,
+        `"${o.trackingNumber || 'PENDING'}"`,
+        o.items?.length || 0,
+        `"${itemsDesc.replace(/"/g, '""')}"`,
+        o.grandTotal || 0,
+        `"${o.status || 'PAID'}"`,
+        `"PAID (Verified)"`,
+      ].join(',');
+    });
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `VedaPavitra-Delivery-Bills-Manifest-${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast?.(`Exported delivery bill manifest for ${sourceList.length} orders!`, 'success');
+  };
+
 
   const handleUpdateStatus = async (e) => {
     e.preventDefault();
@@ -230,16 +436,19 @@ export default function AdminOrdersPage() {
     return matchesStatus && matchesSearch;
   });
 
+  const unacceptedCount = filteredOrders.filter((o) => !o.billId && o.status !== 'CANCELLED').length;
+  const billedCount = filteredOrders.filter((o) => o.billId).length;
+
   return (
     <div>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <h1 className="heading-display" style={{ fontSize: '2rem', margin: '0 0 6px', color: '#1C1917' }}>
             Orders & Fulfillment Pipeline
           </h1>
           <p style={{ color: '#6B635B', fontSize: '0.9rem', margin: 0 }}>
-            Process shipments, update Delhivery AWB tracking numbers, and view customer parcels.
+            Batch accept customer orders, generate all parcel bills at once, print dispatch manifests, and manage delivery slips.
           </p>
         </div>
 
@@ -252,6 +461,166 @@ export default function AdminOrdersPage() {
         </button>
       </div>
 
+      {/* Batch Operations Bar */}
+      <div
+        style={{
+          backgroundColor: '#1C1917',
+          color: '#FAF7F2',
+          borderRadius: '12px',
+          padding: '16px 20px',
+          marginBottom: '20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '14px',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+          border: '1px solid rgba(200, 130, 42, 0.35)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: 'rgba(200, 130, 42, 0.2)',
+              color: '#FCD34D',
+              padding: '4px 10px',
+              borderRadius: '6px',
+              fontSize: '0.78rem',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.06em',
+            }}
+          >
+            ⚡ Warehouse Bulk Pipeline
+          </div>
+          <span style={{ fontSize: '0.82rem', color: '#D6D3D1' }}>
+            {selectedOrderIds.size > 0 ? (
+              <span>
+                <strong style={{ color: '#FCD34D' }}>{selectedOrderIds.size}</strong> of {filteredOrders.length} selected
+              </span>
+            ) : (
+              <span>
+                {filteredOrders.length} visible ({unacceptedCount} unbilled, {billedCount} ready for dispatch)
+              </span>
+            )}
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          {/* Accept All / Accept Selected Orders Button */}
+          <button
+            type="button"
+            disabled={isBatchUpdating || (selectedOrderIds.size === 0 && unacceptedCount === 0)}
+            onClick={handleBatchAcceptOrders}
+            style={{
+              backgroundColor: isBatchUpdating ? '#78716C' : '#C8822A',
+              color: '#FFF',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '9px 15px',
+              fontSize: '0.82rem',
+              fontWeight: 700,
+              cursor: isBatchUpdating || (selectedOrderIds.size === 0 && unacceptedCount === 0) ? 'not-allowed' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              boxShadow: '0 2px 8px rgba(200, 130, 42, 0.35)',
+              transition: 'all 0.2s',
+            }}
+            title="Batch accept all pending orders and generate their delivery bills and parcel IDs"
+          >
+            <CheckCircle2 size={15} />
+            <span>
+              {isBatchUpdating
+                ? 'Accepting Orders...'
+                : selectedOrderIds.size > 0
+                ? `Accept Selected (${selectedOrderIds.size})`
+                : `Accept All Orders (${unacceptedCount || filteredOrders.length})`}
+            </span>
+          </button>
+
+          {/* Generate & Print All Bills at Once */}
+          <button
+            type="button"
+            onClick={() => handlePrintAllBills('slips')}
+            disabled={filteredOrders.length === 0}
+            style={{
+              backgroundColor: '#292524',
+              color: '#FAF7F2',
+              border: '1px solid #78716C',
+              borderRadius: '8px',
+              padding: '9px 14px',
+              fontSize: '0.82rem',
+              fontWeight: 600,
+              cursor: filteredOrders.length === 0 ? 'not-allowed' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.2s',
+            }}
+            title="Generate & print all delivery bill slips at once with barcodes, addresses, and manifest"
+          >
+            <Printer size={15} color="#E09C48" />
+            <span>
+              {selectedOrderIds.size > 0
+                ? `Print Selected Bills (${selectedOrderIds.size})`
+                : `Generate All Bills (${filteredOrders.length})`}
+            </span>
+          </button>
+
+          {/* Master Manifest Sheet Button */}
+          <button
+            type="button"
+            onClick={() => handlePrintAllBills('manifest')}
+            disabled={filteredOrders.length === 0}
+            style={{
+              backgroundColor: '#292524',
+              color: '#FAF7F2',
+              border: '1px solid #78716C',
+              borderRadius: '8px',
+              padding: '9px 13px',
+              fontSize: '0.82rem',
+              fontWeight: 600,
+              cursor: filteredOrders.length === 0 ? 'not-allowed' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+            title="View & print single-sheet consolidated dispatch manifest table"
+          >
+            <FileText size={15} color="#A8A29E" />
+            <span>All Bills Manifest</span>
+          </button>
+
+          {/* Export CSV Button */}
+          <button
+            type="button"
+            onClick={handleExportBillsCSV}
+            disabled={filteredOrders.length === 0}
+            style={{
+              backgroundColor: '#292524',
+              color: '#FAF7F2',
+              border: '1px solid #78716C',
+              borderRadius: '8px',
+              padding: '9px 12px',
+              fontSize: '0.82rem',
+              fontWeight: 600,
+              cursor: filteredOrders.length === 0 ? 'not-allowed' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+            }}
+            title="Export CSV of all generated bills with addresses & tracking numbers"
+          >
+            <Download size={14} color="#A8A29E" />
+            <span>CSV</span>
+          </button>
+        </div>
+      </div>
+
       {/* Filter and Search Bar */}
       <div
         style={{
@@ -259,7 +628,7 @@ export default function AdminOrdersPage() {
           border: '1px solid #EAE3D6',
           borderRadius: '12px',
           padding: '16px 20px',
-          marginBottom: '24px',
+          marginBottom: '20px',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
@@ -333,26 +702,44 @@ export default function AdminOrdersPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
               <thead>
                 <tr style={{ backgroundColor: '#FAF7F2', textAlign: 'left', borderBottom: '1px solid #EAE3D6' }}>
-                  <th style={{ padding: '14px 16px' }}>Order Number</th>
-                  <th style={{ padding: '14px 16px' }}>Date</th>
-                  <th style={{ padding: '14px 16px' }}>Customer</th>
-                  <th style={{ padding: '14px 16px' }}>Total Amount</th>
-                  <th style={{ padding: '14px 16px' }}>Status</th>
-                  <th style={{ padding: '14px 16px' }}>Delivery Bill & Parcel ID</th>
-                  <th style={{ padding: '14px 16px' }}>Courier / Tracking</th>
-                  <th style={{ padding: '14px 16px', textAlign: 'right' }}>Action</th>
+                  <th style={{ width: '42px', padding: '14px 12px', textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      aria-label="Select all orders"
+                      checked={selectedOrderIds.size === filteredOrders.length && filteredOrders.length > 0}
+                      onChange={handleToggleSelectAll}
+                      style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: '#C8822A' }}
+                    />
+                  </th>
+                  <th style={{ padding: '14px 14px' }}>Order Number</th>
+                  <th style={{ padding: '14px 14px' }}>Date</th>
+                  <th style={{ padding: '14px 14px' }}>Customer</th>
+                  <th style={{ padding: '14px 14px' }}>Total Amount</th>
+                  <th style={{ padding: '14px 14px' }}>Status</th>
+                  <th style={{ padding: '14px 14px' }}>Delivery Bill & Parcel ID</th>
+                  <th style={{ padding: '14px 14px' }}>Courier / Tracking</th>
+                  <th style={{ padding: '14px 14px', textAlign: 'right' }}>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredOrders.map((order) => (
-                  <tr key={order.id} style={{ borderBottom: '1px solid #F5F1EB' }}>
-                    <td style={{ padding: '14px 16px', fontWeight: 600, color: '#1C1917' }}>
+                  <tr key={order.id} style={{ borderBottom: '1px solid #F5F1EB', backgroundColor: selectedOrderIds.has(order.id) ? '#FFFBEB' : 'transparent' }}>
+                    <td style={{ padding: '14px 12px', textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select order ${order.orderNumber}`}
+                        checked={selectedOrderIds.has(order.id)}
+                        onChange={() => handleToggleSelectOrder(order.id)}
+                        style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: '#C8822A' }}
+                      />
+                    </td>
+                    <td style={{ padding: '14px 14px', fontWeight: 600, color: '#1C1917' }}>
                       {order.orderNumber}
                     </td>
-                    <td style={{ padding: '14px 16px', color: '#78716C', fontSize: '0.8rem' }}>
+                    <td style={{ padding: '14px 14px', color: '#78716C', fontSize: '0.8rem' }}>
                       {formatDate(order.createdAt)}
                     </td>
-                    <td style={{ padding: '14px 16px' }}>
+                    <td style={{ padding: '14px 14px' }}>
                       <div style={{ fontWeight: 600, color: '#1C1917' }}>
                         {order.shippingAddress?.fullName || 'Guest Devotee'}
                       </div>
@@ -360,10 +747,10 @@ export default function AdminOrdersPage() {
                         {order.shippingAddress?.city}, {order.shippingAddress?.state} - {order.shippingAddress?.postalCode}
                       </div>
                     </td>
-                    <td style={{ padding: '14px 16px', fontWeight: 700, color: '#1C1917' }}>
+                    <td style={{ padding: '14px 14px', fontWeight: 700, color: '#1C1917' }}>
                       {formatPrice(order.grandTotal)}
                     </td>
-                    <td style={{ padding: '14px 16px' }}>
+                    <td style={{ padding: '14px 14px' }}>
                       <span
                         style={{
                           fontSize: '0.75rem',
@@ -391,7 +778,7 @@ export default function AdminOrdersPage() {
                         {order.status}
                       </span>
                     </td>
-                    <td style={{ padding: '14px 16px' }}>
+                    <td style={{ padding: '14px 14px' }}>
                       {order.billId ? (
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -424,7 +811,7 @@ export default function AdminOrdersPage() {
                         </button>
                       )}
                     </td>
-                    <td style={{ padding: '14px 16px', fontSize: '0.8rem', color: '#57534E' }}>
+                    <td style={{ padding: '14px 14px', fontSize: '0.8rem', color: '#57534E' }}>
                       {order.trackingNumber ? (
                         <div>
                           <div>{order.shippingCourier || 'Delhivery'}</div>
@@ -436,12 +823,12 @@ export default function AdminOrdersPage() {
                         <span style={{ color: '#A8A29E' }}>Unassigned</span>
                       )}
                     </td>
-                    <td style={{ padding: '14px 16px', textAlign: 'right' }}>
+                    <td style={{ padding: '14px 14px', textAlign: 'right' }}>
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
                         {order.billId ? (
                           <button
                             type="button"
-                            onClick={() => setPrintingOrder(order)}
+                            onClick={() => handlePrintIndividualBill(order)}
                             title="Print delivery slip to attach to parcel"
                             style={{
                               display: 'inline-flex',
@@ -603,7 +990,7 @@ export default function AdminOrdersPage() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => setPrintingOrder(selectedOrder)}
+                      onClick={() => handlePrintIndividualBill(selectedOrder)}
                       style={{
                         width: '100%',
                         display: 'flex',
@@ -960,13 +1347,13 @@ export default function AdminOrdersPage() {
         </div>
       )}
 
-      {/* Printable Delivery Bill & Consignment Packing Slip Modal */}
-      {printingOrder && (
+      {/* Printable Delivery Bills & Master Consignment Packing Slips Modal */}
+      {printingOrders.length > 0 && (
         <div
           style={{
             position: 'fixed',
             inset: 0,
-            backgroundColor: 'rgba(0,0,0,0.65)',
+            backgroundColor: 'rgba(0,0,0,0.7)',
             zIndex: 1000,
             display: 'flex',
             alignItems: 'center',
@@ -976,26 +1363,43 @@ export default function AdminOrdersPage() {
           }}
           className="delivery-slip-modal-backdrop"
         >
-          {/* Print Specific CSS */}
+          {/* Print Specific CSS with multi-page slip breaks */}
           <style>{`
             @media print {
               body * {
                 visibility: hidden !important;
               }
-              #printable-delivery-bill, #printable-delivery-bill * {
+              #printable-delivery-bills-container, #printable-delivery-bills-container * {
                 visibility: visible !important;
               }
-              #printable-delivery-bill {
+              #printable-delivery-bills-container {
                 position: absolute !important;
                 left: 0 !important;
                 top: 0 !important;
                 width: 100% !important;
                 margin: 0 !important;
-                padding: 16px !important;
+                padding: 0 !important;
                 background: #ffffff !important;
                 color: #000000 !important;
                 box-shadow: none !important;
+              }
+              .bill-page-slip {
+                page-break-after: always !important;
+                break-after: page !important;
+                margin: 0 0 24px 0 !important;
+                padding: 24px !important;
                 border: 2px solid #000 !important;
+                background: #ffffff !important;
+                box-shadow: none !important;
+              }
+              .bill-page-slip:last-child {
+                page-break-after: auto !important;
+                break-after: auto !important;
+              }
+              .manifest-sheet-page {
+                padding: 16px !important;
+                background: #ffffff !important;
+                color: #000000 !important;
               }
               .no-print {
                 display: none !important;
@@ -1007,13 +1411,14 @@ export default function AdminOrdersPage() {
             style={{
               backgroundColor: '#FFF',
               borderRadius: '16px',
-              maxWidth: '780px',
+              maxWidth: printViewTab === 'manifest' ? '980px' : '820px',
               width: '100%',
-              maxHeight: '92vh',
+              maxHeight: '94vh',
               display: 'flex',
               flexDirection: 'column',
-              boxShadow: '0 20px 50px rgba(0,0,0,0.3)',
+              boxShadow: '0 24px 60px rgba(0,0,0,0.35)',
               overflow: 'hidden',
+              transition: 'max-width 0.2s ease',
             }}
           >
             {/* Modal Actions Header (Non-Printable) */}
@@ -1026,20 +1431,93 @@ export default function AdminOrdersPage() {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '12px',
+                borderBottom: '1px solid rgba(200, 130, 42, 0.4)',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Printer size={20} color="#E09C48" />
+                <div
+                  style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '8px',
+                    backgroundColor: 'rgba(200, 130, 42, 0.2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Printer size={18} color="#E09C48" />
+                </div>
                 <div>
                   <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>
-                    Official Consignment Slip & Delivery Bill
+                    {printingOrders.length === 1
+                      ? `Delivery Bill: ${printingOrders[0].orderNumber}`
+                      : `Batch Delivery Bills (${printingOrders.length} Orders at Once)`}
                   </h3>
-                  <span style={{ fontSize: '0.75rem', color: '#A8A29E' }}>
-                    Print this sheet and attach to the exterior delivery parcel box
+                  <span style={{ fontSize: '0.74rem', color: '#A8A29E' }}>
+                    {printingOrders.length === 1
+                      ? 'Print and attach to the exterior parcel box'
+                      : 'All parcel bills generated at once. Each prints cleanly on its own sheet.'}
                   </span>
                 </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+
+              {/* View Switcher Tabs (Parcel Slips vs Master Manifest Table) */}
+              <div
+                style={{
+                  display: 'flex',
+                  backgroundColor: '#292524',
+                  padding: '3px',
+                  borderRadius: '8px',
+                  gap: '4px',
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setPrintViewTab('slips')}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    border: 'none',
+                    backgroundColor: printViewTab === 'slips' ? '#C8822A' : 'transparent',
+                    color: printViewTab === 'slips' ? '#FFF' : '#A8A29E',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                  }}
+                >
+                  <FileText size={13} />
+                  <span>Parcel Slips ({printingOrders.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrintViewTab('manifest')}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    border: 'none',
+                    backgroundColor: printViewTab === 'manifest' ? '#C8822A' : 'transparent',
+                    color: printViewTab === 'manifest' ? '#FFF' : '#A8A29E',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                  }}
+                >
+                  <List size={13} />
+                  <span>Master Manifest Sheet</span>
+                </button>
+              </div>
+
+              {/* Header Action Buttons */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <button
                   type="button"
                   onClick={() => window.print()}
@@ -1050,18 +1528,43 @@ export default function AdminOrdersPage() {
                     padding: '8px 16px',
                     borderRadius: '8px',
                     fontWeight: 700,
-                    fontSize: '0.85rem',
+                    fontSize: '0.82rem',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
+                    boxShadow: '0 2px 8px rgba(200, 130, 42, 0.4)',
                   }}
                 >
-                  <Printer size={16} /> Print Delivery Bill (Ctrl + P)
+                  <Printer size={15} />
+                  <span>{printViewTab === 'slips' ? `Print All Bills (${printingOrders.length})` : 'Print Manifest Sheet'}</span>
                 </button>
+
                 <button
                   type="button"
-                  onClick={() => setPrintingOrder(null)}
+                  onClick={handleExportBillsCSV}
+                  style={{
+                    backgroundColor: '#292524',
+                    color: '#FAF7F2',
+                    border: '1px solid #78716C',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    fontWeight: 600,
+                    fontSize: '0.8rem',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                  }}
+                  title="Export CSV of all generated bills"
+                >
+                  <Download size={14} />
+                  <span>CSV</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPrintingOrders([])}
                   style={{
                     backgroundColor: '#292524',
                     color: '#D6D3D1',
@@ -1076,320 +1579,563 @@ export default function AdminOrdersPage() {
               </div>
             </div>
 
-            {/* The Actual Printable Delivery Bill Slip */}
+            {/* The Actual Printable Container */}
             <div
               style={{
-                padding: '28px',
+                padding: '24px',
                 overflowY: 'auto',
                 backgroundColor: '#F8F6F0',
+                flex: 1,
               }}
             >
-              <div
-                id="printable-delivery-bill"
-                style={{
-                  backgroundColor: '#FFF',
-                  padding: '32px',
-                  borderRadius: '12px',
-                  border: '1.5px solid #292524',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
-                  color: '#1C1917',
-                  fontFamily: 'system-ui, -apple-system, sans-serif',
-                }}
-              >
-                {/* Header Section */}
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
-                    borderBottom: '2px solid #1C1917',
-                    paddingBottom: '20px',
-                    marginBottom: '20px',
-                  }}
-                >
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span
-                        style={{
-                          fontFamily: 'Georgia, serif',
-                          fontSize: '1.6rem',
-                          fontWeight: 800,
-                          letterSpacing: '-0.02em',
-                          color: '#1C1917',
-                        }}
-                      >
-                        VEDAPAVITRA
-                      </span>
-                      <span
-                        style={{
-                          fontSize: '0.7rem',
-                          fontWeight: 700,
-                          border: '1px solid #C8822A',
-                          color: '#C8822A',
-                          padding: '2px 6px',
-                          borderRadius: '4px',
-                          textTransform: 'uppercase',
-                        }}
-                      >
-                        Sacred Vedic Atelier
-                      </span>
-                    </div>
-                    <p style={{ margin: '4px 0 0', fontSize: '0.78rem', color: '#57534E', lineHeight: 1.4 }}>
-                      Vedic Heritage Artisans & Sacred Consecrations<br />
-                      Shri Kashi Vishwanath Marg, Varanasi, Uttar Pradesh - 221001<br />
-                      GSTIN: 09AABCV1234F1Z8 | support@vedapavitra.com
-                    </p>
-                  </div>
-
-                  <div style={{ textAlign: 'right' }}>
-                    <div
-                      style={{
-                        display: 'inline-block',
-                        padding: '6px 12px',
-                        backgroundColor: '#1C1917',
-                        color: '#FFF',
-                        fontWeight: 800,
-                        fontSize: '0.85rem',
-                        letterSpacing: '0.06em',
-                        borderRadius: '4px',
-                        marginBottom: '6px',
-                        textTransform: 'uppercase',
-                      }}
-                    >
-                      Delivery Bill & Manifest
-                    </div>
-                    <div style={{ fontSize: '0.78rem', color: '#44403C' }}>
-                      Date: <strong>{formatDate(printingOrder.createdAt || new Date().toISOString())}</strong>
-                    </div>
-                    <div style={{ fontSize: '0.78rem', color: '#44403C' }}>
-                      Payment: <strong>PREPAID (Verified)</strong>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Tracking & Parcel Identifiers Box */}
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(3, 1fr)',
-                    backgroundColor: '#FAF7F2',
-                    border: '1.5px solid #D6D3D1',
-                    borderRadius: '8px',
-                    padding: '14px 18px',
-                    marginBottom: '20px',
-                    gap: '12px',
-                  }}
-                >
-                  <div>
-                    <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', fontWeight: 700, color: '#78716C', display: 'block' }}>
-                      Delivery Bill No.
-                    </span>
-                    <span style={{ fontFamily: 'monospace', fontSize: '1rem', fontWeight: 800, color: '#9B3828' }}>
-                      {printingOrder.billId || `VP-BILL-2026-${printingOrder.orderNumber?.replace('VP-', '')}`}
-                    </span>
-                  </div>
-
-                  <div>
-                    <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', fontWeight: 700, color: '#78716C', display: 'block' }}>
-                      Parcel Box ID
-                    </span>
-                    <span style={{ fontFamily: 'monospace', fontSize: '1rem', fontWeight: 800, color: '#1C1917' }}>
-                      {printingOrder.consignmentId || `VP-PKG-${printingOrder.orderNumber?.replace('VP-', '')}`}
-                    </span>
-                  </div>
-
-                  <div>
-                    <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', fontWeight: 700, color: '#78716C', display: 'block' }}>
-                      Courier & AWB Tracking
-                    </span>
-                    <span style={{ fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700, color: '#1C1917' }}>
-                      {printingOrder.shippingCourier || 'Delhivery Express'}: {printingOrder.trackingNumber || 'DELH-VP-PENDING'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Simulated Barcode for Box Attachment */}
-                <div
-                  style={{
-                    border: '1px dashed #A8A29E',
-                    padding: '12px 18px',
-                    borderRadius: '6px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: '22px',
-                    backgroundColor: '#FFF',
-                  }}
-                >
-                  <div>
-                    <div style={{ fontSize: '0.7rem', color: '#78716C', fontWeight: 700, textTransform: 'uppercase' }}>
-                      Consignment Barcode (Scan for Inwarding / Handover)
-                    </div>
-                    {/* Barcode visual lines */}
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'stretch',
-                        gap: '2px',
-                        height: '38px',
-                        margin: '6px 0 4px',
-                      }}
-                      aria-label="Parcel Barcode"
-                    >
-                      {[3, 1, 2, 4, 1, 3, 2, 1, 4, 2, 3, 1, 2, 1, 4, 3, 2, 1, 3, 4, 1, 2, 3, 2, 4, 1, 2, 3, 1, 4, 2, 1, 3, 2, 1, 4].map((w, idx) => (
-                        <div
-                          key={idx}
-                          style={{
-                            width: `${w * 2}px`,
-                            backgroundColor: idx % 2 === 0 ? '#1C1917' : '#FFF',
-                          }}
-                        />
-                      ))}
-                    </div>
-                    <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', letterSpacing: '0.2em', color: '#44403C', fontWeight: 700 }}>
-                      *{printingOrder.consignmentId || printingOrder.orderNumber}*
-                    </span>
-                  </div>
-
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '0.72rem', color: '#166534', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' }}>
-                      <ShieldCheck size={14} /> GANGAJAL CONSECRATED
-                    </div>
-                    <div style={{ fontSize: '0.68rem', color: '#78716C', maxWidth: '180px', marginTop: '2px' }}>
-                      Pure brass & sacred pooja samagri. Handle with respectful care.
-                    </div>
-                  </div>
-                </div>
-
-                {/* Routing: From and To addresses */}
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: '20px',
-                    border: '1.5px solid #EAE3D6',
-                    borderRadius: '8px',
-                    padding: '16px',
-                    marginBottom: '24px',
-                  }}
-                >
-                  <div style={{ borderRight: '1px solid #EAE3D6', paddingRight: '16px' }}>
-                    <div style={{ fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', color: '#78716C', marginBottom: '6px' }}>
-                      DISPATCH FROM (ATELIER)
-                    </div>
-                    <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1C1917' }}>
-                      VedaPavitra Consecration & Fulfillment Center
-                    </div>
-                    <div style={{ fontSize: '0.8rem', color: '#44403C', lineHeight: 1.4, marginTop: '2px' }}>
-                      Dashashwamedh Ghat Marg, Kashi<br />
-                      Varanasi, Uttar Pradesh - 221001<br />
-                      Authorized Dispatcher: Pandit R. K. Shastri
-                    </div>
-                  </div>
-
-                  <div>
-                    <div style={{ fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', color: '#C8822A', marginBottom: '6px' }}>
-                      SHIP & DELIVER TO (RECIPIENT)
-                    </div>
-                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#1C1917' }}>
-                      {printingOrder.shippingAddress?.fullName || 'Valued Devotee'}
-                    </div>
-                    <div style={{ fontSize: '0.85rem', color: '#1C1917', lineHeight: 1.45, marginTop: '2px' }}>
-                      {printingOrder.shippingAddress?.addressLine1}<br />
-                      {printingOrder.shippingAddress?.addressLine2 && <>{printingOrder.shippingAddress?.addressLine2}<br /></>}
-                      <strong style={{ fontSize: '0.9rem' }}>
-                        {printingOrder.shippingAddress?.city}, {printingOrder.shippingAddress?.state} - {printingOrder.shippingAddress?.postalCode}
-                      </strong><br />
-                      <span style={{ fontWeight: 600 }}>Phone: {printingOrder.guestPhone || printingOrder.shippingAddress?.phone}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Manifest Table */}
-                <div style={{ marginBottom: '20px' }}>
-                  <div style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', color: '#44403C', marginBottom: '8px' }}>
-                    Package Contents & Manifest Summary
-                  </div>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-                    <thead>
-                      <tr style={{ backgroundColor: '#1C1917', color: '#FFF' }}>
-                        <th style={{ padding: '8px 10px', textAlign: 'left', borderRadius: '4px 0 0 0' }}>#</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'left' }}>Sacred Item</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'center' }}>Variant</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'center' }}>Qty</th>
-                        <th style={{ padding: '8px 10px', textAlign: 'right', borderRadius: '0 4px 0 0' }}>Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {printingOrder.items?.map((item, idx) => (
-                        <tr key={idx} style={{ borderBottom: '1px solid #EAE3D6' }}>
-                          <td style={{ padding: '10px 10px', color: '#78716C' }}>{idx + 1}</td>
-                          <td style={{ padding: '10px 10px', fontWeight: 600, color: '#1C1917' }}>
-                            {item.productTitle} {item.isGift && <span style={{ color: '#D97706', fontSize: '0.72rem' }}>(Complimentary Gift)</span>}
-                          </td>
-                          <td style={{ padding: '10px 10px', textAlign: 'center', color: '#57534E' }}>{item.variantTitle || 'Standard'}</td>
-                          <td style={{ padding: '10px 10px', textAlign: 'center', fontWeight: 700 }}>{item.quantity}</td>
-                          <td style={{ padding: '10px 10px', textAlign: 'right', fontWeight: 700 }}>
-                            {item.isGift ? 'FREE' : formatPrice(item.totalPrice)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Financial Summary & Sanctification Signoff */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '24px', alignItems: 'flex-start' }}>
-                  <div style={{ border: '1px solid #E8D5BF', borderRadius: '8px', padding: '12px 14px', backgroundColor: '#FDFCF9' }}>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#C8822A', marginBottom: '4px' }}>
-                      Atelier Consecration & Seal of Purity
-                    </div>
-                    <p style={{ fontSize: '0.72rem', color: '#6B635B', margin: 0, lineHeight: 1.4 }}>
-                      This parcel contains consecrated items from sacred traditions. Inspected, sanctified with pure Gangajal, and dispatched under strict Vedic guidelines.
-                    </p>
-                    <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: '8px', borderTop: '1px dashed #D6D3D1' }}>
-                      <div>
-                        <div style={{ fontSize: '0.68rem', color: '#78716C' }}>Packed by: Team Kashi Atelier</div>
-                        <div style={{ fontSize: '0.68rem', color: '#78716C' }}>Order Ref: {printingOrder.orderNumber}</div>
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic', fontSize: '0.85rem', color: '#1C1917', fontWeight: 700 }}>
-                          Om Namah Shivaya
-                        </div>
-                        <div style={{ fontSize: '0.65rem', color: '#78716C' }}>Authorized Signatory</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ backgroundColor: '#FAF7F2', borderRadius: '8px', padding: '14px 16px', border: '1px solid #EAE3D6' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#57534E', marginBottom: '6px' }}>
-                      <span>Items Subtotal:</span>
-                      <span>{formatPrice(printingOrder.subtotal || printingOrder.grandTotal)}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#57534E', marginBottom: '6px' }}>
-                      <span>Sacred Courier Delivery:</span>
-                      <span style={{ color: '#166534', fontWeight: 600 }}>FREE</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#57534E', marginBottom: '8px' }}>
-                      <span>Taxes & Duties (GST incl.):</span>
-                      <span>₹0.00 (All Incl.)</span>
-                    </div>
+              <div id="printable-delivery-bills-container">
+                {printViewTab === 'manifest' ? (
+                  /* ======================================================== */
+                  /* Consolidated Master Manifest Table Sheet View            */
+                  /* ======================================================== */
+                  <div
+                    className="manifest-sheet-page"
+                    style={{
+                      backgroundColor: '#FFF',
+                      padding: '28px',
+                      borderRadius: '12px',
+                      border: '1.5px solid #292524',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
+                      color: '#1C1917',
+                      fontFamily: 'system-ui, -apple-system, sans-serif',
+                    }}
+                  >
+                    {/* Manifest Header */}
                     <div
                       style={{
                         display: 'flex',
                         justifyContent: 'space-between',
-                        fontSize: '1rem',
-                        fontWeight: 800,
-                        color: '#1C1917',
-                        borderTop: '1.5px solid #1C1917',
-                        paddingTop: '8px',
+                        alignItems: 'flex-start',
+                        borderBottom: '2px solid #1C1917',
+                        paddingBottom: '16px',
+                        marginBottom: '16px',
                       }}
                     >
-                      <span>Total Paid:</span>
-                      <span style={{ color: '#C8822A' }}>{formatPrice(printingOrder.grandTotal)}</span>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span
+                            style={{
+                              fontFamily: 'Georgia, serif',
+                              fontSize: '1.5rem',
+                              fontWeight: 800,
+                              letterSpacing: '-0.02em',
+                              color: '#1C1917',
+                            }}
+                          >
+                            VEDAPAVITRA
+                          </span>
+                          <span
+                            style={{
+                              fontSize: '0.7rem',
+                              fontWeight: 700,
+                              border: '1px solid #C8822A',
+                              color: '#C8822A',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            Sacred Vedic Atelier
+                          </span>
+                        </div>
+                        <p style={{ margin: '4px 0 0', fontSize: '0.78rem', color: '#57534E', lineHeight: 1.4 }}>
+                          Warehouse Daily Outward Dispatch Manifest & Courier Handover Log Sheet<br />
+                          Shri Kashi Vishwanath Marg, Varanasi, Uttar Pradesh - 221001 | GSTIN: 09AABCV1234F1Z8
+                        </p>
+                      </div>
+
+                      <div style={{ textAlign: 'right' }}>
+                        <div
+                          style={{
+                            display: 'inline-block',
+                            padding: '4px 10px',
+                            backgroundColor: '#1C1917',
+                            color: '#FFF',
+                            fontWeight: 800,
+                            fontSize: '0.78rem',
+                            letterSpacing: '0.05em',
+                            borderRadius: '4px',
+                            marginBottom: '4px',
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          Official Dispatch Manifest
+                        </div>
+                        <div style={{ fontSize: '0.76rem', color: '#44403C' }}>
+                          Generated: <strong>{formatDate(new Date().toISOString())}</strong>
+                        </div>
+                        <div style={{ fontSize: '0.76rem', color: '#166534', fontWeight: 600 }}>
+                          Status: ALL VERIFIED & CONSECRATED
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Summary KPI Badges */}
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(4, 1fr)',
+                        gap: '12px',
+                        backgroundColor: '#FAF7F2',
+                        border: '1.5px solid #D6D3D1',
+                        borderRadius: '8px',
+                        padding: '12px 16px',
+                        marginBottom: '18px',
+                      }}
+                    >
+                      <div>
+                        <span style={{ fontSize: '0.68rem', textTransform: 'uppercase', fontWeight: 700, color: '#78716C', display: 'block' }}>
+                          Total Parcels
+                        </span>
+                        <span style={{ fontFamily: 'monospace', fontSize: '1.1rem', fontWeight: 800, color: '#1C1917' }}>
+                          {printingOrders.length} Boxes
+                        </span>
+                      </div>
+                      <div>
+                        <span style={{ fontSize: '0.68rem', textTransform: 'uppercase', fontWeight: 700, color: '#78716C', display: 'block' }}>
+                          Total Manifest Value
+                        </span>
+                        <span style={{ fontFamily: 'monospace', fontSize: '1.1rem', fontWeight: 800, color: '#C8822A' }}>
+                          {formatPrice(printingOrders.reduce((sum, o) => sum + (o.grandTotal || 0), 0))}
+                        </span>
+                      </div>
+                      <div>
+                        <span style={{ fontSize: '0.68rem', textTransform: 'uppercase', fontWeight: 700, color: '#78716C', display: 'block' }}>
+                          Courier Logistics Partner
+                        </span>
+                        <span style={{ fontFamily: 'monospace', fontSize: '0.92rem', fontWeight: 700, color: '#1C1917' }}>
+                          Delhivery Express
+                        </span>
+                      </div>
+                      <div>
+                        <span style={{ fontSize: '0.68rem', textTransform: 'uppercase', fontWeight: 700, color: '#78716C', display: 'block' }}>
+                          Purity Assurance
+                        </span>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#166534' }}>
+                          ✓ Gangajal Consecrated
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Consolidated Table */}
+                    <div style={{ overflowX: 'auto', marginBottom: '20px' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#1C1917', color: '#FFF', textAlign: 'left' }}>
+                            <th style={{ padding: '7px 8px', borderRadius: '4px 0 0 0' }}>#</th>
+                            <th style={{ padding: '7px 8px' }}>Order #</th>
+                            <th style={{ padding: '7px 8px' }}>Delivery Bill ID</th>
+                            <th style={{ padding: '7px 8px' }}>Box ID</th>
+                            <th style={{ padding: '7px 8px' }}>Recipient & Phone</th>
+                            <th style={{ padding: '7px 8px' }}>Destination</th>
+                            <th style={{ padding: '7px 8px' }}>AWB Tracking</th>
+                            <th style={{ padding: '7px 8px', textAlign: 'right' }}>Amount</th>
+                            <th style={{ padding: '7px 8px', textAlign: 'center', borderRadius: '0 4px 0 0' }}>Agent Sign</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {printingOrders.map((ord, idx) => {
+                            const bId = ord.billId || `VP-BILL-2026-${(ord.orderNumber || ord.id).replace('VP-', '').slice(-5).toUpperCase()}`;
+                            const cId = ord.consignmentId || `VP-PKG-${(ord.orderNumber || ord.id).replace('VP-', '').toUpperCase()}`;
+                            const trk = ord.trackingNumber || `DELH-VP-${(ord.orderNumber || ord.id).replace('VP-', '')}`;
+                            const addr = ord.shippingAddress || {};
+                            return (
+                              <tr key={ord.id || idx} style={{ borderBottom: '1px solid #EAE3D6' }}>
+                                <td style={{ padding: '7px 8px', color: '#78716C' }}>{idx + 1}</td>
+                                <td style={{ padding: '7px 8px', fontWeight: 700, color: '#1C1917' }}>{ord.orderNumber}</td>
+                                <td style={{ padding: '7px 8px', fontFamily: 'monospace', color: '#C8822A', fontWeight: 700 }}>{bId}</td>
+                                <td style={{ padding: '7px 8px', fontFamily: 'monospace', color: '#44403C' }}>{cId}</td>
+                                <td style={{ padding: '7px 8px' }}>
+                                  <div style={{ fontWeight: 600, color: '#1C1917' }}>{addr.fullName || 'Guest Devotee'}</div>
+                                  <div style={{ fontSize: '0.7rem', color: '#78716C' }}>{ord.guestPhone || addr.phone || '-'}</div>
+                                </td>
+                                <td style={{ padding: '7px 8px', fontSize: '0.72rem', color: '#57534E' }}>
+                                  {addr.city || 'City'}, {addr.state || 'State'} - {addr.postalCode || ''}
+                                </td>
+                                <td style={{ padding: '7px 8px', fontFamily: 'monospace', fontSize: '0.74rem', color: '#1C1917' }}>
+                                  {trk}
+                                </td>
+                                <td style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 700, color: '#1C1917' }}>
+                                  {formatPrice(ord.grandTotal)}
+                                </td>
+                                <td style={{ padding: '7px 8px', textAlign: 'center', borderLeft: '1px dashed #D6D3D1' }}>
+                                  <div style={{ borderBottom: '1px solid #94A3B8', width: '60px', height: '14px', margin: '0 auto' }} />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Handover Verification Sign-off Block */}
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: '20px',
+                        border: '1.5px solid #D6D3D1',
+                        borderRadius: '8px',
+                        padding: '14px 18px',
+                        backgroundColor: '#FAF7F2',
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', color: '#78716C', marginBottom: '4px' }}>
+                          DISPATCHED BY (ATELIER FULFILLMENT DESK)
+                        </div>
+                        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1C1917' }}>
+                          VedaPavitra Consecration Center, Varanasi
+                        </div>
+                        <div style={{ fontSize: '0.74rem', color: '#57534E', marginTop: '4px' }}>
+                          Consecrated under sacred Gandhashastra guidelines.<br />
+                          Sign: __________________________ Date: _____________
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style={{ fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', color: '#C8822A', marginBottom: '4px' }}>
+                          RECEIVED BY COURIER LOGISTICS PARTNER
+                        </div>
+                        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1C1917' }}>
+                          Delhivery Express Authorized Pickup Agent
+                        </div>
+                        <div style={{ fontSize: '0.74rem', color: '#57534E', marginTop: '4px' }}>
+                          Agent Name / Badge: _______________________________<br />
+                          Signature: ______________________ Time: _____________
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  /* ======================================================== */
+                  /* Multi-Order Parcel Slips View (Each with Page Break)     */
+                  /* ======================================================== */
+                  printingOrders.map((ord, oIdx) => {
+                    const billId = ord.billId || `VP-BILL-2026-${(ord.orderNumber || ord.id).replace('VP-', '').slice(-5).toUpperCase()}`;
+                    const consignmentId = ord.consignmentId || `VP-PKG-${(ord.orderNumber || ord.id).replace('VP-', '').toUpperCase()}`;
+                    const courier = ord.shippingCourier || 'Delhivery Express';
+                    const trackingNumber = ord.trackingNumber || `DELH-VP-${(ord.orderNumber || ord.id).replace('VP-', '')}`;
+                    const addr = ord.shippingAddress || {};
+                    const isLast = oIdx === printingOrders.length - 1;
+
+                    return (
+                      <div
+                        key={ord.id || oIdx}
+                        className="bill-page-slip"
+                        style={{
+                          backgroundColor: '#FFF',
+                          padding: '30px',
+                          borderRadius: '12px',
+                          border: '1.5px solid #292524',
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
+                          color: '#1C1917',
+                          fontFamily: 'system-ui, -apple-system, sans-serif',
+                          marginBottom: isLast ? 0 : '28px',
+                        }}
+                      >
+                        {/* Header Section */}
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'flex-start',
+                            borderBottom: '2px solid #1C1917',
+                            paddingBottom: '18px',
+                            marginBottom: '18px',
+                          }}
+                        >
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span
+                                style={{
+                                  fontFamily: 'Georgia, serif',
+                                  fontSize: '1.55rem',
+                                  fontWeight: 800,
+                                  letterSpacing: '-0.02em',
+                                  color: '#1C1917',
+                                }}
+                              >
+                                VEDAPAVITRA
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: '0.68rem',
+                                  fontWeight: 700,
+                                  border: '1px solid #C8822A',
+                                  color: '#C8822A',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  textTransform: 'uppercase',
+                                }}
+                              >
+                                Sacred Vedic Atelier
+                              </span>
+                            </div>
+                            <p style={{ margin: '4px 0 0', fontSize: '0.76rem', color: '#57534E', lineHeight: 1.4 }}>
+                              Vedic Heritage Artisans & Sacred Consecrations<br />
+                              Shri Kashi Vishwanath Marg, Varanasi, Uttar Pradesh - 221001<br />
+                              GSTIN: 09AABCV1234F1Z8 | support@vedapavitra.com
+                            </p>
+                          </div>
+
+                          <div style={{ textAlign: 'right' }}>
+                            <div
+                              style={{
+                                display: 'inline-block',
+                                padding: '5px 11px',
+                                backgroundColor: '#1C1917',
+                                color: '#FFF',
+                                fontWeight: 800,
+                                fontSize: '0.8rem',
+                                letterSpacing: '0.06em',
+                                borderRadius: '4px',
+                                marginBottom: '5px',
+                                textTransform: 'uppercase',
+                              }}
+                            >
+                              Delivery Bill & Manifest
+                            </div>
+                            <div style={{ fontSize: '0.76rem', color: '#44403C' }}>
+                              Date: <strong>{formatDate(ord.createdAt || new Date().toISOString())}</strong>
+                            </div>
+                            <div style={{ fontSize: '0.76rem', color: '#44403C' }}>
+                              Payment: <strong>PREPAID (Verified)</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Tracking & Parcel Identifiers Box */}
+                        <div
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(3, 1fr)',
+                            backgroundColor: '#FAF7F2',
+                            border: '1.5px solid #D6D3D1',
+                            borderRadius: '8px',
+                            padding: '12px 16px',
+                            marginBottom: '18px',
+                            gap: '12px',
+                          }}
+                        >
+                          <div>
+                            <span style={{ fontSize: '0.68rem', textTransform: 'uppercase', fontWeight: 700, color: '#78716C', display: 'block' }}>
+                              Delivery Bill No.
+                            </span>
+                            <span style={{ fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 800, color: '#9B3828' }}>
+                              {billId}
+                            </span>
+                          </div>
+
+                          <div>
+                            <span style={{ fontSize: '0.68rem', textTransform: 'uppercase', fontWeight: 700, color: '#78716C', display: 'block' }}>
+                              Parcel Box ID
+                            </span>
+                            <span style={{ fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 800, color: '#1C1917' }}>
+                              {consignmentId}
+                            </span>
+                          </div>
+
+                          <div>
+                            <span style={{ fontSize: '0.68rem', textTransform: 'uppercase', fontWeight: 700, color: '#78716C', display: 'block' }}>
+                              Courier & AWB Tracking
+                            </span>
+                            <span style={{ fontFamily: 'monospace', fontSize: '0.92rem', fontWeight: 700, color: '#1C1917' }}>
+                              {courier}: {trackingNumber}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Simulated Barcode for Box Attachment */}
+                        <div
+                          style={{
+                            border: '1px dashed #A8A29E',
+                            padding: '10px 16px',
+                            borderRadius: '6px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            marginBottom: '20px',
+                            backgroundColor: '#FFF',
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: '0.68rem', color: '#78716C', fontWeight: 700, textTransform: 'uppercase' }}>
+                              Consignment Barcode (Scan for Inwarding / Handover)
+                            </div>
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'stretch',
+                                gap: '2px',
+                                height: '34px',
+                                margin: '5px 0 3px',
+                              }}
+                              aria-label="Parcel Barcode"
+                            >
+                              {[3, 1, 2, 4, 1, 3, 2, 1, 4, 2, 3, 1, 2, 1, 4, 3, 2, 1, 3, 4, 1, 2, 3, 2, 4, 1, 2, 3, 1, 4, 2, 1, 3, 2, 1, 4].map((w, bIdx) => (
+                                <div
+                                  key={bIdx}
+                                  style={{
+                                    width: `${w * 2}px`,
+                                    backgroundColor: bIdx % 2 === 0 ? '#1C1917' : '#FFF',
+                                  }}
+                                />
+                              ))}
+                            </div>
+                            <span style={{ fontFamily: 'monospace', fontSize: '0.72rem', letterSpacing: '0.2em', color: '#44403C', fontWeight: 700 }}>
+                              *{consignmentId}*
+                            </span>
+                          </div>
+
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: '0.7rem', color: '#166534', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' }}>
+                              <ShieldCheck size={14} /> GANGAJAL CONSECRATED
+                            </div>
+                            <div style={{ fontSize: '0.66rem', color: '#78716C', maxWidth: '180px', marginTop: '2px' }}>
+                              Pure brass & sacred pooja samagri. Handle with respectful care.
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Routing: From and To addresses */}
+                        <div
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr',
+                            gap: '18px',
+                            border: '1.5px solid #EAE3D6',
+                            borderRadius: '8px',
+                            padding: '14px',
+                            marginBottom: '20px',
+                          }}
+                        >
+                          <div style={{ borderRight: '1px solid #EAE3D6', paddingRight: '14px' }}>
+                            <div style={{ fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', color: '#78716C', marginBottom: '4px' }}>
+                              DISPATCH FROM (ATELIER)
+                            </div>
+                            <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1C1917' }}>
+                              VedaPavitra Consecration Center
+                            </div>
+                            <div style={{ fontSize: '0.78rem', color: '#44403C', lineHeight: 1.4, marginTop: '2px' }}>
+                              Dashashwamedh Ghat Marg, Kashi<br />
+                              Varanasi, Uttar Pradesh - 221001<br />
+                              Authorized Dispatcher: Pandit R. K. Shastri
+                            </div>
+                          </div>
+
+                          <div>
+                            <div style={{ fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', color: '#C8822A', marginBottom: '4px' }}>
+                              SHIP & DELIVER TO (RECIPIENT)
+                            </div>
+                            <div style={{ fontSize: '1rem', fontWeight: 800, color: '#1C1917' }}>
+                              {addr.fullName || 'Valued Devotee'}
+                            </div>
+                            <div style={{ fontSize: '0.82rem', color: '#1C1917', lineHeight: 1.4, marginTop: '2px' }}>
+                              {addr.addressLine1 || addr.streetLine1}<br />
+                              {(addr.addressLine2 || addr.streetLine2) && <>{addr.addressLine2 || addr.streetLine2}<br /></>}
+                              <strong style={{ fontSize: '0.86rem' }}>
+                                {addr.city}, {addr.state} - {addr.postalCode}
+                              </strong><br />
+                              <span style={{ fontWeight: 600 }}>Phone: {ord.guestPhone || addr.phone}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Manifest Table */}
+                        <div style={{ marginBottom: '18px' }}>
+                          <div style={{ fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', color: '#44403C', marginBottom: '6px' }}>
+                            Package Contents & Manifest Summary
+                          </div>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                            <thead>
+                              <tr style={{ backgroundColor: '#1C1917', color: '#FFF' }}>
+                                <th style={{ padding: '7px 9px', textAlign: 'left', borderRadius: '4px 0 0 0' }}>#</th>
+                                <th style={{ padding: '7px 9px', textAlign: 'left' }}>Sacred Item</th>
+                                <th style={{ padding: '7px 9px', textAlign: 'center' }}>Variant</th>
+                                <th style={{ padding: '7px 9px', textAlign: 'center' }}>Qty</th>
+                                <th style={{ padding: '7px 9px', textAlign: 'right', borderRadius: '0 4px 0 0' }}>Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {ord.items?.map((item, iIdx) => (
+                                <tr key={iIdx} style={{ borderBottom: '1px solid #EAE3D6' }}>
+                                  <td style={{ padding: '8px 9px', color: '#78716C' }}>{iIdx + 1}</td>
+                                  <td style={{ padding: '8px 9px', fontWeight: 600, color: '#1C1917' }}>
+                                    {item.productTitle} {item.isGift && <span style={{ color: '#D97706', fontSize: '0.7rem' }}>(Complimentary Gift)</span>}
+                                  </td>
+                                  <td style={{ padding: '8px 9px', textAlign: 'center', color: '#57534E' }}>{item.variantTitle || 'Standard'}</td>
+                                  <td style={{ padding: '8px 9px', textAlign: 'center', fontWeight: 700 }}>{item.quantity}</td>
+                                  <td style={{ padding: '8px 9px', textAlign: 'right', fontWeight: 700 }}>
+                                    {item.isGift ? 'FREE' : formatPrice(item.totalPrice)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* Financial Summary & Sanctification Signoff */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '20px', alignItems: 'flex-start' }}>
+                          <div style={{ border: '1px solid #E8D5BF', borderRadius: '8px', padding: '10px 12px', backgroundColor: '#FDFCF9' }}>
+                            <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#C8822A', marginBottom: '3px' }}>
+                              Atelier Consecration & Seal of Purity
+                            </div>
+                            <p style={{ fontSize: '0.7rem', color: '#6B635B', margin: 0, lineHeight: 1.4 }}>
+                              This parcel contains consecrated items from sacred traditions. Inspected, sanctified with pure Gangajal, and dispatched under strict Vedic guidelines.
+                            </p>
+                            <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: '6px', borderTop: '1px dashed #D6D3D1' }}>
+                              <div>
+                                <div style={{ fontSize: '0.66rem', color: '#78716C' }}>Packed by: Team Kashi Atelier</div>
+                                <div style={{ fontSize: '0.66rem', color: '#78716C' }}>Order Ref: {ord.orderNumber}</div>
+                              </div>
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic', fontSize: '0.82rem', color: '#1C1917', fontWeight: 700 }}>
+                                  Om Namah Shivaya
+                                </div>
+                                <div style={{ fontSize: '0.64rem', color: '#78716C' }}>Authorized Signatory</div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={{ backgroundColor: '#FAF7F2', borderRadius: '8px', padding: '12px 14px', border: '1px solid #EAE3D6' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.76rem', color: '#57534E', marginBottom: '4px' }}>
+                              <span>Items Subtotal:</span>
+                              <span>{formatPrice(ord.subtotal || ord.grandTotal)}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.76rem', color: '#57534E', marginBottom: '4px' }}>
+                              <span>Sacred Courier Delivery:</span>
+                              <span style={{ color: '#166534', fontWeight: 600 }}>FREE</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.76rem', color: '#57534E', marginBottom: '6px' }}>
+                              <span>Taxes & Duties (GST incl.):</span>
+                              <span>₹0.00 (All Incl.)</span>
+                            </div>
+                            <div
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                fontSize: '0.95rem',
+                                fontWeight: 800,
+                                color: '#1C1917',
+                                borderTop: '1.5px solid #1C1917',
+                                paddingTop: '6px',
+                              }}
+                            >
+                              <span>Total Paid:</span>
+                              <span style={{ color: '#C8822A' }}>{formatPrice(ord.grandTotal)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </div>
